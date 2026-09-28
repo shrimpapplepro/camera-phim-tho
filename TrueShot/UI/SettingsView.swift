@@ -167,7 +167,8 @@ struct SettingsView: View {
             }
             LabeledContent("Shutter", value: "\(ExposureMath.shutterText(caps.shutterRange.lowerBound)) – \(ExposureMath.shutterText(caps.shutterRange.upperBound))")
             LabeledContent("ISO", value: "\(ExposureMath.isoText(caps.isoRange.lowerBound)) – \(ExposureMath.isoText(caps.isoRange.upperBound))")
-            LabeledContent("Bayer RAW", value: caps.rawAvailable ? String(localized: "Available") : String(localized: "Unavailable"))
+            LabeledContent("RAW Format", value: !caps.rawAvailable ? String(localized: "Unavailable")
+                           : caps.rawLabel == "ProRAW" ? "Apple ProRAW" : "Bayer RAW")
             LabeledContent("Manual Focus", value: caps.manualFocus ? String(localized: "Yes") : String(localized: "No"))
             if caps.minimumFocusDistance > 0 {
                 LabeledContent("Closest Focus", value: Measurement(value: Double(caps.minimumFocusDistance) / 10, unit: UnitLength.centimeters)

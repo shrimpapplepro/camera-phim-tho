@@ -9,7 +9,13 @@ struct FilterBrowser: View {
 
     enum Mode: Hashable { case looks, grain }
 
-    private var looks: [LUTInfo] { model.library.catalog.filter { $0.brand == brand } }
+    /// Tab id for the favorites strip (never a real brand name).
+    private static let favoritesTab = "★favorites"
+    private var inFavorites: Bool { brand == Self.favoritesTab }
+
+    private var looks: [LUTInfo] {
+        inFavorites ? model.favoriteLooks : model.library.catalog.filter { $0.brand == brand }
+    }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -49,6 +55,7 @@ struct FilterBrowser: View {
         }
         .padding(12)
         .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        .sensoryFeedback(.success, trigger: model.preferences.favoriteLooks) { _, _ in model.preferences.haptics }
         .onAppear {
             if brand.isEmpty {
                 brand = model.filterInfo?.brand ?? model.library.brands.first ?? ""
@@ -59,9 +66,17 @@ struct FilterBrowser: View {
     private var brandTabs: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 6) {
-                ForEach(model.library.brands, id: \.self) { name in
+                ForEach([Self.favoritesTab] + model.library.brands, id: \.self) { name in
                     let active = name == brand
-                    Button(name) { brand = name }
+                    Button {
+                        brand = name
+                    } label: {
+                        if name == Self.favoritesTab {
+                            Label("Favorites", systemImage: "star.fill").labelStyle(.iconOnly)
+                        } else {
+                            Text(name)
+                        }
+                    }
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(active ? Color.black : Color.primary)
                         .padding(.horizontal, 12)
@@ -84,8 +99,15 @@ struct FilterBrowser: View {
                                selected: model.preferences.filter == nil) {
                         model.selectFilter(nil)
                     }
+                    if inFavorites, looks.isEmpty {
+                        Text("Tap and hold a look to add it here.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxHeight: .infinity)
+                            .padding(.leading, 8)
+                    }
                     ForEach(looks) { info in
-                        FilterThumbnail(model: model, info: info)
+                        FilterThumbnail(model: model, info: info, inFavorites: inFavorites)
                             .id(info.id)
                     }
                 }
@@ -166,28 +188,39 @@ struct FilterBrowser: View {
 private struct FilterThumbnail: View {
     let model: CameraModel
     let info: LUTInfo
+    let inFavorites: Bool
     @State private var image: UIImage?
 
     var body: some View {
-        FilterTile(title: info.name, image: image, selected: model.preferences.filter?.id == info.id) {
+        FilterTile(title: info.name, image: image, selected: model.preferences.filter?.id == info.id,
+                   favorite: model.isFavorite(info.id)) {
             model.selectFilter(info.id)
+        } hold: {
+            if inFavorites { model.removeFavorite(info) } else { model.addFavorite(info) }
         }
         .task(id: info.id) {
             image = await model.thumbnail(for: info.id)
         }
         .accessibilityLabel("\(info.brand) \(info.name)")
+        .accessibilityAction(named: inFavorites ? "Remove from Favorites" : "Add to Favorites") {
+            if inFavorites { model.removeFavorite(info) } else { model.addFavorite(info) }
+        }
     }
 }
 
+/// Tap selects; tap-and-hold runs `hold` (favorites). Plain gestures rather than a Button, so a
+/// recognized hold doesn't also fire the tap on release.
 private struct FilterTile: View {
     let title: String
     let image: UIImage?
     let selected: Bool
+    var favorite = false
     let action: () -> Void
+    var hold: (() -> Void)?
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topTrailing) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.08))
                     if let image {
@@ -201,14 +234,26 @@ private struct FilterTile: View {
                 .frame(width: 58, height: 72)
                 .clipShape(.rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? Color.yellow : .clear, lineWidth: 2))
-                Text(title)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .frame(width: 62)
-                    .foregroundStyle(selected ? Color.yellow : Color.primary)
+                if favorite {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.yellow)
+                        .shadow(color: .black.opacity(0.6), radius: 1.5)
+                        .padding(4)
+                        .accessibilityHidden(true)
+                }
             }
+            Text(title)
+                .font(.caption2)
+                .lineLimit(1)
+                .frame(width: 62)
+                .foregroundStyle(selected ? Color.yellow : Color.primary)
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .contentShape(.rect)
+        .onTapGesture(perform: action)
+        .onLongPressGesture(minimumDuration: 0.45) { hold?() }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue(favorite ? String(localized: "Favorite") : "")
     }
 }

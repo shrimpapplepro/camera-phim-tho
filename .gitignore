@@ -11,3 +11,6 @@ xcuserdata/
 # Python
 __pycache__/
 *.pyc
+
+# Local Apple Developer Team ID for scripts/postgen.sh (kept out of the public repo)
+.team

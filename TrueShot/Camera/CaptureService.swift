@@ -102,11 +102,15 @@ actor CaptureService {
             selectLens(id)
         case .pointOfInterest(let point):
             focusAndExpose(at: point)
-            renderer.setSpot(point)
         case .capture(let angle, let filter, let grain, let watermark):
             Task { await capture(rotationAngle: angle, filter: filter, grain: grain, watermark: watermark) }
         case .setFilterFrames(let enabled):
             videoOutput.connection(with: .video)?.isEnabled = enabled
+        case .setPreviewRotation(let angle):
+            previewAngle = angle
+            applyVideoConnectionGeometry()
+        case .setLandscapeFraming(let landscape):
+            setFraming(landscape: landscape)
         case .finishCapture(let pending, let watermark):
             Task { await finish(pending, watermark: watermark) }
         case .setPreferences(let newPrefs):
@@ -201,6 +205,15 @@ actor CaptureService {
             return LensOption(id: device.uniqueID, label: Self.zoomLabel(multiplier), name: device.localizedName)
         }
         devicesByID = Dictionary(uniqueKeysWithValues: sorted.map { ($0.uniqueID, $0) })
+
+        // Front: the Center Stage ultra wide (square open-gate sensor with dynamic aspect ratios)
+        // when present, otherwise the regular front camera.
+        let fronts = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInUltraWideCamera, .builtInWideAngleCamera],
+                                                      mediaType: .video, position: .front).devices
+        if let front = fronts.first(where: { $0.formats.contains { !$0.supportedDynamicAspectRatios.isEmpty } }) ?? fronts.first {
+            lenses.append(LensOption(id: front.uniqueID, label: String(localized: "Front"), name: front.localizedName, isFront: true))
+            devicesByID[front.uniqueID] = front
+        }
     }
 
     private static func zoomLabel(_ m: Double) -> String {
@@ -223,8 +236,65 @@ actor CaptureService {
             sink.yield(.message(String(localized: "Couldn't switch to that lens.")))
         }
         session.commitConfiguration()
+        configureForPosition(camera)
         photoOutput.maxPhotoQualityPrioritization = .speed
         deviceDidChange()
+    }
+
+    /// Front vs rear specifics, applied after the input changes:
+    /// - Front uses its open-gate format (square sensor, dynamic aspect ratios; Center Stage when
+    ///   available) and ProRAW, its only RAW. The rear keeps Bayer RAW and ProRAW off.
+    /// - Photos are never mirrored (true to life); the viewfinder mirroring is done by the preview
+    ///   layer and, for the filtered viewfinder, by the renderer after rotation.
+    private func configureForPosition(_ camera: AVCaptureDevice) {
+        let front = camera.position == .front
+        if front {
+            let open = camera.formats.filter { !$0.supportedDynamicAspectRatios.isEmpty }
+            let best = open.first { $0.isSmartFramingSupported && $0.supportedMaxPhotoDimensions.contains { $0.width >= 4032 } }
+                ?? open.first { $0.supportedMaxPhotoDimensions.contains { $0.width >= 4032 } }
+                ?? open.first
+            if let best, (try? camera.lockForConfiguration()) != nil {
+                camera.activeFormat = best
+                camera.unlockForConfiguration()
+            }
+        }
+        session.beginConfiguration()
+        let wantProRAW = front && photoOutput.isAppleProRAWSupported
+        if photoOutput.isAppleProRAWEnabled != wantProRAW { photoOutput.isAppleProRAWEnabled = wantProRAW }
+        if let connection = photoOutput.connection(with: .video), connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
+        }
+        session.commitConfiguration()
+        applyVideoConnectionGeometry()
+    }
+
+    private var previewAngle: CGFloat = 90
+
+    /// The filtered viewfinder's frames: rotated to the preview angle and, on the front camera,
+    /// mirrored — done by the connection so every sensor's mounting is handled correctly.
+    private func applyVideoConnectionGeometry() {
+        guard let connection = videoOutput.connection(with: .video) else { return }
+        if connection.isVideoRotationAngleSupported(previewAngle) { connection.videoRotationAngle = previewAngle }
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = device?.position == .front
+        }
+    }
+
+    /// Open-gate framing: portrait ⇄ landscape on the same square sensor (no phone rotation).
+    /// On this sensor the 4:3 dynamic ratio yields a portrait photo and 3:4 a landscape one
+    /// (verified: ProRAW 3024×4032 vs 4032×3024).
+    private func setFraming(landscape: Bool) {
+        guard let device else { return }
+        let ratio: AVCaptureDevice.AspectRatio = landscape ? .ratio3x4 : .ratio4x3
+        guard device.activeFormat.supportedDynamicAspectRatios.contains(ratio),
+              (try? device.lockForConfiguration()) != nil else { return }
+        device.setDynamicAspectRatio(ratio) { [sink] _, _ in
+            let dims = device.dynamicDimensions
+            if dims.width > 0 { sink.yield(.framing(CGFloat(dims.height) / CGFloat(dims.width))) }
+        }
+        device.unlockForConfiguration()
     }
 
     /// Recompute capabilities for the active lens, clamp the user's controls to them,
@@ -274,7 +344,17 @@ actor CaptureService {
         c.manualFocus = device.isLockingFocusWithCustomLensPositionSupported
         c.minimumFocusDistance = device.minimumFocusDistance   // mm, -1 if unknown
         c.manualWhiteBalance = device.isLockingWhiteBalanceWithCustomDeviceGainsSupported
-        c.rawAvailable = photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
+        let rawTypes = photoOutput.availableRawPhotoPixelFormatTypes
+        let bayer = rawTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
+        let proRAW = rawTypes.contains { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) }
+        c.rawAvailable = bayer || proRAW
+        c.rawLabel = bayer ? "RAW" : "ProRAW"
+        c.isFront = device.position == .front
+        let ratios = device.activeFormat.supportedDynamicAspectRatios
+        c.canSwapFraming = ratios.contains(.ratio4x3) && ratios.contains(.ratio3x4)
+        let dims = device.dynamicDimensions
+        // Sensor-oriented dimensions are shown rotated a quarter turn in the portrait UI.
+        c.frameAspect = dims.width > 0 && dims.height > 0 ? CGFloat(dims.height) / CGFloat(dims.width) : 3.0 / 4.0
         c.hasFlash = device.hasTorch   // the LED is driven as a torch burst (see fireLED)
         c.supportedExposureSignals = device.supportedExposureSignals.map(\.rawValue).sorted()
 
@@ -773,7 +853,9 @@ actor CaptureService {
 
     private func capture(rotationAngle: CGFloat, filter: FilterSelection?, grain: GrainSettings,
                          watermark: WatermarkSettings) async {
-        guard let rawType = photoOutput.availableRawPhotoPixelFormatTypes.first(where: { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }) else {
+        let rawTypes = photoOutput.availableRawPhotoPixelFormatTypes
+        guard let rawType = rawTypes.first(where: { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) })
+                ?? rawTypes.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) }) else {
             sink.yield(.message(String(localized: "RAW capture isn't available on this lens.")))
             return
         }

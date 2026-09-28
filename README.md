@@ -50,13 +50,19 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
 - Modes: Balanced, Center-Weighted, Spot (tap to meter), Highlight Priority (expose to the right) and Apple.
 
 **Looks** (these only affect the HEIC; the DNG is never altered)
-- 3D LUT filters with a live viewfinder preview, per-look intensity, and thumbnails of your current scene.
+- 3D LUT filters with a live viewfinder preview, per-look intensity, thumbnails of your current scene, and
+  **Favorites** (tap and hold a look to add it; tap and hold in ★ Favorites to remove it).
   **The repo ships no LUTs.** Bring your own `.cube` files (see below).
 - **Film grain**: monochrome, strongest in the midtones, scaled to the image resolution, and moving in the viewfinder.
 - **Date Stamp**: the orange seven-segment `'26 9 28` of 90s compact film cameras, from each photo's capture time.
 - **Watermarks** filled from each photo's own metadata (camera model, lens, and the focal length, aperture,
   shutter and ISO actually used, plus the capture time). Styles: Light Bar, Dark Bar, Border and Overlay, with an optional signature.
   You can adjust the watermark on the real photo before saving.
+
+**Front camera**
+- The Center Stage front camera's square "open gate" sensor: swap **portrait ⇄ landscape without rotating the phone**
+  (the viewfinder reshapes in place). Its only RAW is Apple ProRAW, used as the source for the same looks, grain and
+  watermarks. Mirrored viewfinder, unmirrored photos.
 
 **Lock Screen camera**
 - A Control (with a custom aperture SF Symbol) for the **Lock Screen**, **Control Center** and **Action button**.
@@ -91,9 +97,14 @@ cd camera-phim-tho
    ```
 4. **Open and sign.** Open `TrueShot.xcodeproj`. For each of the three targets (**TrueShot**, **TrueShotControls**,
    **TrueShotCapture**), go to *Signing & Capabilities*, tick *Automatically manage signing*, and choose your team.
+   Tip: put your Team ID in a local `.team` file (`echo ABCDE12345 > .team`, git-ignored) and every
+   `xcodegen generate` keeps signing set up for all three targets.
 5. **Run.** Connect your iPhone, select it as the destination, and press **Run** (⌘R).
    The first time, enable *Developer Mode* on the phone (Settings › Privacy & Security) and trust your
    developer certificate (Settings › General › VPN & Device Management).
+
+To bump the version or build number, edit `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in `project.yml`
+(not in Xcode — `xcodegen generate` overwrites Xcode's settings); the app and both extensions share it.
 
 Or from the command line, after `xcodegen generate`:
 

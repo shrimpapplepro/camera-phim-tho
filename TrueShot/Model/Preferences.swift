@@ -128,6 +128,8 @@ struct Preferences: Codable, Equatable, Sendable {
     // Filters
     var saveFilteredCopy = true
     var filter: FilterSelection?
+    /// Favorite looks (LUT ids), in the order they were added.
+    var favoriteLooks: [String] = []
     var grain = GrainSettings()
     var watermark = WatermarkSettings()
     var reviewWatermark = true
@@ -161,6 +163,7 @@ struct Preferences: Codable, Equatable, Sendable {
         saveFilteredCopy = (try? c.decode(Bool.self, forKey: .saveFilteredCopy)) ?? d.saveFilteredCopy
         filter = try? c.decodeIfPresent(FilterSelection.self, forKey: .filter)
         grain = (try? c.decode(GrainSettings.self, forKey: .grain)) ?? d.grain
+        favoriteLooks = (try? c.decode([String].self, forKey: .favoriteLooks)) ?? d.favoriteLooks
         watermark = (try? c.decode(WatermarkSettings.self, forKey: .watermark)) ?? d.watermark
         reviewWatermark = (try? c.decode(Bool.self, forKey: .reviewWatermark)) ?? d.reviewWatermark
     }

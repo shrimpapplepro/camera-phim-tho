@@ -113,6 +113,8 @@ final class CameraModel {
             status = .unauthorized
         case .failed(let reason):
             status = .failed(reason)
+        case .framing(let aspect):
+            withAnimation(.smooth(duration: 0.35)) { capabilities.frameAspect = aspect }
         case .systemControlsFullscreen(let fullscreen):
             withAnimation(.smooth) { systemControlsFullscreen = fullscreen }
         }
@@ -196,6 +198,30 @@ final class CameraModel {
         intents.yield(.selectLens(id))
     }
 
+    var rearLenses: [LensOption] { lenses.filter { !$0.isFront } }
+    var frontLens: LensOption? { lenses.first(where: \.isFront) }
+    var isFrontActive: Bool { frontLens?.id == lensID }
+    @ObservationIgnored private var lastRearLensID: String?
+
+    var isLandscapeFraming: Bool { capabilities.frameAspect > 1 }
+
+    /// Open-gate front camera: swap portrait ⇄ landscape without rotating the phone.
+    func toggleFraming() {
+        guard capabilities.canSwapFraming else { return }
+        intents.yield(.setLandscapeFraming(!isLandscapeFraming))
+    }
+
+    /// Front ⇄ rear. Going back returns to the rear lens you were last on.
+    func flipCamera() {
+        guard let front = frontLens else { return }
+        if isFrontActive {
+            selectLens(lastRearLensID ?? rearLenses.first(where: { $0.label == "1×" })?.id ?? rearLenses.first?.id ?? front.id)
+        } else {
+            lastRearLensID = lensID
+            selectLens(front.id)
+        }
+    }
+
     func capture() {
         guard status == .running, !readout.isInterrupted, pendingReview == nil else { return }
         guard capabilities.rawAvailable else {
@@ -235,6 +261,11 @@ final class CameraModel {
         guard let layer = previewLayer else { return }
         let devicePoint = layer.captureDevicePointConverted(fromLayerPoint: point)
         intents.yield(.pointOfInterest(devicePoint))
+        // Spot metering runs on upright, as-displayed frames: use the view's own coordinates.
+        let size = layer.bounds.size
+        if size.width > 0, size.height > 0 {
+            service.renderer.setSpot(CGPoint(x: point.x / size.width, y: point.y / size.height))
+        }
         guard preferences.showFocusReticle else { return }
         focusReticle = point
         reticleTask?.cancel()
@@ -257,7 +288,7 @@ final class CameraModel {
     }
 
     private func applyPreviewAngle(_ angle: CGFloat) {
-        service.renderer.setRotationAngle(angle)
+        intents.yield(.setPreviewRotation(angle))
         guard let connection = previewLayer?.connection, connection.isVideoRotationAngleSupported(angle) else { return }
         connection.videoRotationAngle = angle
     }
@@ -265,6 +296,27 @@ final class CameraModel {
     // MARK: Filters
 
     var filterInfo: LUTInfo? { preferences.filter.flatMap { library.info($0.id) } }
+
+    // MARK: Favorite looks
+
+    /// Favorites that still exist in the installed library.
+    var favoriteLooks: [LUTInfo] { preferences.favoriteLooks.compactMap { library.info($0) } }
+
+    func isFavorite(_ id: String) -> Bool { preferences.favoriteLooks.contains(id) }
+
+    func addFavorite(_ info: LUTInfo) {
+        guard !isFavorite(info.id) else {
+            show(String(localized: "\(info.name) is already in Favorites."))
+            return
+        }
+        preferences.favoriteLooks.append(info.id)
+        show(String(localized: "Added \(info.name) to Favorites."))
+    }
+
+    func removeFavorite(_ info: LUTInfo) {
+        preferences.favoriteLooks.removeAll { $0 == info.id }
+        show(String(localized: "Removed \(info.name) from Favorites."))
+    }
 
     /// A look is active when a LUT or grain is on. With no look, the viewfinder is the
     /// untouched system preview and only the DNG is saved.

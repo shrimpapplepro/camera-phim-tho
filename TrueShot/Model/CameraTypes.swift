@@ -5,8 +5,9 @@ import UIKit
 /// Bayer RAW requires a physical lens at 1× device zoom.
 struct LensOption: Identifiable, Hashable, Sendable {
     let id: String          // AVCaptureDevice.uniqueID
-    let label: String       // "0.5×", "1×", "4×"
+    let label: String       // "0.5×", "1×", "4×", "Front"
     let name: String        // localized device name, for accessibility
+    var isFront = false
 }
 
 /// Which exposure axes the user has taken manual control of.
@@ -33,6 +34,13 @@ struct CameraCapabilities: Equatable, Sendable {
     var minimumFocusDistance = -1
     var manualWhiteBalance = false
     var rawAvailable = false
+    /// "RAW" (Bayer, rear) or "ProRAW" (front: its only RAW, demosaiced by Apple).
+    var rawLabel = "RAW"
+    var isFront = false
+    /// Viewfinder/photo shape as displayed, width ÷ height (3/4 portrait, 4/3 landscape).
+    var frameAspect: CGFloat = 3.0 / 4.0
+    /// True when the lens can swap portrait ⇄ landscape on the same sensor (open gate).
+    var canSwapFraming = false
     var hasFlash = false
     /// Manual-axis combinations the format accepts (`supportsExposureModeCustom`).
     var supportedCombos: Set<UInt8> = [0]
@@ -117,6 +125,7 @@ enum CameraEvent: Sendable {
     case unauthorized
     case failed(String)
     case systemControlsFullscreen(Bool)
+    case framing(CGFloat)
 }
 
 enum CameraIntent: Sendable {
@@ -125,6 +134,8 @@ enum CameraIntent: Sendable {
     case pointOfInterest(CGPoint)
     case capture(rotationAngle: CGFloat, filter: FilterSelection?, grain: GrainSettings, watermark: WatermarkSettings)
     case setFilterFrames(Bool)
+    case setPreviewRotation(CGFloat)
+    case setLandscapeFraming(Bool)
     case finishCapture(PendingCapture, watermark: WatermarkSettings)
     case setPreferences(Preferences)
     case setActive(Bool)

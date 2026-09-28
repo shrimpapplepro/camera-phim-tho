@@ -17,7 +17,6 @@ final class FilterRenderer: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         var intensity: Float = 1
         var grain = GrainSettings()
         var layer: LayerBox?
-        var rotationAngle: CGFloat = 90
         var snapshot: CIImage?
         var frameCount = 0
         var meterMode: MeterMode = .system
@@ -58,10 +57,8 @@ final class FilterRenderer: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     func setMeter(mode: MeterMode, handler: (@Sendable (MeterStats) -> Void)?) {
         state.withLock { $0.meterMode = mode; $0.onMeter = handler }
     }
-    /// Spot position in the frame's (sensor) normalized coordinates — the same space as the
-    /// device point of interest.
+    /// Spot position in normalized coordinates of the upright, as-displayed frame.
     func setSpot(_ point: CGPoint) { state.withLock { $0.spot = point } }
-    func setRotationAngle(_ angle: CGFloat) { state.withLock { $0.rotationAngle = angle } }
 
     /// A small, upright, unfiltered copy of a recent frame, for filter thumbnails.
     func latestSnapshot() -> CIImage? { state.withLock { $0.snapshot } }
@@ -71,11 +68,11 @@ final class FilterRenderer: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let s = state.withLock { s -> (CubeLUT?, Float, GrainSettings, CAMetalLayer?, CGFloat, Bool) in
+        let s = state.withLock { s -> (CubeLUT?, Float, GrainSettings, CAMetalLayer?, Bool) in
             s.frameCount &+= 1
-            return (s.cube, s.intensity, s.grain, s.layer?.layer, s.rotationAngle, s.frameCount % 15 == 0 || s.snapshot == nil)
+            return (s.cube, s.intensity, s.grain, s.layer?.layer, s.frameCount % 15 == 0 || s.snapshot == nil)
         }
-        let (cube, intensity, grain, layer, angle, takeSnapshot) = s
+        let (cube, intensity, grain, layer, takeSnapshot) = s
 
         // Meter every 6th frame (~5 Hz) on the untouched camera frame, before any look.
         let meter = state.withLock { s -> (MeterMode, CGPoint, (@Sendable (MeterStats) -> Void)?)? in
@@ -92,8 +89,10 @@ final class FilterRenderer: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
             if let stats { handler(stats) }
         }
 
-        let upright = CIImage(cvPixelBuffer: pixelBuffer).oriented(Self.orientation(for: angle))
-        let image = upright.transformed(by: CGAffineTransform(translationX: -upright.extent.minX, y: -upright.extent.minY))
+        // The capture connection rotates and (front camera) mirrors the frames, exactly as for the
+        // system preview — it knows each sensor's mounting, which a fixed rule here did not.
+        let frame = CIImage(cvPixelBuffer: pixelBuffer)
+        let image = frame.transformed(by: CGAffineTransform(translationX: -frame.extent.minX, y: -frame.extent.minY))
 
         if takeSnapshot {
             let scale = 360 / max(image.extent.width, image.extent.height)
@@ -134,15 +133,6 @@ final class FilterRenderer: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
         commandBuffer.present(drawable)
         commandBuffer.commit()
-    }
-
-    static func orientation(for angle: CGFloat) -> CGImagePropertyOrientation {
-        switch Int((angle.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360).rounded()) {
-        case 90: .right
-        case 180: .down
-        case 270: .left
-        default: .up
-        }
     }
 }
 

@@ -86,24 +86,17 @@ struct CameraView: View {
                 Spacer()
 
                 Button {
-                    cycleGrid()
+                    model.resetAllToAuto()
                 } label: {
-                    Image(systemName: model.preferences.grid == .off ? "grid" : "grid.circle.fill")
-                        .font(.body.weight(.medium))
+                    Text("A")
+                        .font(.body.weight(.bold))
                         .frame(width: 30, height: 30)
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                .accessibilityLabel("Grid")
-                .accessibilityValue(model.preferences.grid.label)
+                .accessibilityLabel("Reset everything to Auto")
             }
         }
-    }
-
-    private func cycleGrid() {
-        let all = Preferences.Grid.allCases
-        let i = all.firstIndex(of: model.preferences.grid) ?? 0
-        model.preferences.grid = all[(i + 1) % all.count]
     }
 
     /// Lens buttons centred; one look button in the bottom-right corner (thumb reach). With a look
@@ -174,7 +167,7 @@ struct CameraView: View {
 
     private var statusCapsule: some View {
         HStack(spacing: 8) {
-            Text("RAW")
+            Text(model.capabilities.rawLabel)
                 .font(.caption.weight(.bold))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -193,19 +186,12 @@ struct CameraView: View {
 
     // MARK: Viewfinder
 
+    /// A fixed 3:4 stage: the frame changes shape inside it (open-gate portrait ⇄ landscape) but
+    /// stays centered, and the controls attached to the stage never move.
     private var viewfinder: some View {
-        CameraPreview(model: model)
+        Color.clear
             .aspectRatio(3.0 / 4.0, contentMode: .fit)
-            .overlay { GridOverlay(style: model.preferences.grid).allowsHitTesting(false) }
-            .overlay {
-                if let point = model.focusReticle {
-                    FocusReticle()
-                        .position(point)
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
-            }
-            .overlay { Color.black.opacity(flash ? 1 : 0).allowsHitTesting(false) }
+            .overlay { frame }
             .overlay(alignment: .top) {
                 if let message = model.message {
                     Text(message)
@@ -216,13 +202,6 @@ struct CameraView: View {
                         .glassEffect(.regular, in: .capsule)
                         .padding(12)
                         .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-            .overlay {
-                if model.readout.isInterrupted {
-                    Label("Camera Paused", systemImage: "pause.circle")
-                        .padding()
-                        .glassEffect(.regular, in: .capsule)
                 }
             }
             .overlay(alignment: .bottom) {
@@ -248,6 +227,29 @@ struct CameraView: View {
             }
     }
 
+    /// The shaped camera frame, with the overlays that belong to the image itself.
+    private var frame: some View {
+        CameraPreview(model: model)
+            .aspectRatio(model.capabilities.frameAspect, contentMode: .fit)
+            .overlay { GridOverlay(style: model.preferences.grid).allowsHitTesting(false) }
+            .overlay {
+                if let point = model.focusReticle {
+                    FocusReticle()
+                        .position(point)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .overlay { Color.black.opacity(flash ? 1 : 0).allowsHitTesting(false) }
+            .overlay {
+                if model.readout.isInterrupted {
+                    Label("Camera Paused", systemImage: "pause.circle")
+                        .padding()
+                        .glassEffect(.regular, in: .capsule)
+                }
+            }
+    }
+
     // MARK: Bottom bar
 
     private var bottomBar: some View {
@@ -268,16 +270,20 @@ struct CameraView: View {
             }
             Spacer()
 
-            Button {
-                model.resetAllToAuto()
-            } label: {
-                Text("A")
-                    .font(.title3.weight(.bold))
-                    .frame(width: 44, height: 44)
+            if model.frontLens != nil {
+                Button {
+                    model.flipCamera()
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath.camera")
+                        .font(.title3.weight(.medium))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(model.isFrontActive ? "Switch to rear camera" : "Switch to front camera")
+            } else {
+                Color.clear.frame(width: 52, height: 52)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
-            .accessibilityLabel("Reset everything to Auto")
         }
     }
 }
@@ -352,7 +358,7 @@ struct LensPicker: View {
     var body: some View {
         GlassEffectContainer(spacing: 4) {
             HStack(spacing: 4) {
-                ForEach(model.lenses) { lens in
+                ForEach(model.isFrontActive ? [] : model.rearLenses) { lens in
                     let active = lens.id == model.lensID
                     Button {
                         model.selectLens(lens.id)
@@ -366,6 +372,20 @@ struct LensPicker: View {
                     .glassEffect(active ? .regular.interactive() : .clear.interactive(), in: .circle)
                     .accessibilityLabel(lens.name)
                     .accessibilityAddTraits(active ? .isSelected : [])
+                }
+                if model.isFrontActive, model.capabilities.canSwapFraming {
+                    Button {
+                        model.toggleFraming()
+                    } label: {
+                        Image(systemName: model.isLandscapeFraming ? "rectangle.landscape.rotate" : "rectangle.portrait.rotate")
+                            .font(.footnote.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .accessibilityLabel(model.isLandscapeFraming ? "Landscape framing" : "Portrait framing")
+                    .accessibilityHint("Swaps portrait and landscape without rotating the phone.")
                 }
             }
         }
