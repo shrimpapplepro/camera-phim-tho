@@ -78,8 +78,8 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
 Camera Phim Thô isn't on the App Store. Build and install it yourself:
 
 ```sh
-git clone https://github.com/shrimpapplepro/TrueShot.git
-cd TrueShot
+git clone https://github.com/shrimpapplepro/camera-phim-tho.git
+cd camera-phim-tho
 ```
 
 1. **Set your bundle ID prefix.** In `project.yml`, change `BUNDLE_ID_PREFIX: com.thanhtu` to
