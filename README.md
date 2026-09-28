@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="Design/icon/preview-default.png" width="160" alt="TrueShot icon">
+  <img src="Design/icon/preview-default.png" width="160" alt="Camera Phim Thô icon">
 </p>
 
-<h1 align="center">TrueShot</h1>
+<h1 align="center">Camera Phim Thô</h1>
+
+<p align="center"><em>"Raw film camera" in Vietnamese. Shown as <b>Phim Thô</b> on the Home Screen. (Formerly TrueShot; the code and targets still use that name.)</em></p>
 
 <p align="center">
   A true-to-life RAW camera for iPhone: unprocessed Bayer DNGs, full manual control with
@@ -13,7 +15,7 @@
 
 ## What it is
 
-TrueShot captures **Bayer RAW (DNG)** straight from the sensor. There's no Deep Fusion, no Smart HDR,
+Camera Phim Thô captures **Bayer RAW (DNG)** straight from the sensor. There's no Deep Fusion, no Smart HDR,
 no Night mode, no noise reduction, no sharpening and no digital zoom (`photoQualityPrioritization = .speed`,
 physical lenses only). If you pick a look, TrueShot also develops a HEIC, and the untouched DNG is
 attached to the same photo as its RAW original.
@@ -73,7 +75,7 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
 
 ## Install (build from source)
 
-TrueShot isn't on the App Store. Build and install it yourself:
+Camera Phim Thô isn't on the App Store. Build and install it yourself:
 
 ```sh
 git clone https://github.com/shrimpapplepro/TrueShot.git
@@ -107,8 +109,8 @@ xcrun devicectl device install app --device <your-device-udid> \
 
 ### Add it to the Lock Screen
 
-Long-press the Lock Screen › **Customize** › **Lock Screen** › tap the bottom-right button › choose **TrueShot**.
-The same control is available in Control Center (+ › TrueShot) and for the Action button (Settings › Action Button › Controls).
+Long-press the Lock Screen › **Customize** › **Lock Screen** › tap the bottom-right button › choose **Phim Thô**.
+The same control is available in Control Center (+ › Phim Thô) and for the Action button (Settings › Action Button › Controls).
 Open the app once after changing settings so the Lock Screen camera picks them up.
 
 ## Looks / LUTs

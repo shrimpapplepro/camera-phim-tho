@@ -4,8 +4,8 @@ import Foundation
 /// Launches TrueShot's camera. Shared by the app, the Control (lock screen / Control Center /
 /// Action button) and the Locked Camera Capture extension, as the system requires.
 struct TrueShotCaptureIntent: CameraCaptureIntent {
-    static let title: LocalizedStringResource = "Open TrueShot"
-    static let description = IntentDescription("Opens TrueShot's RAW camera, even from the Lock Screen.")
+    static let title: LocalizedStringResource = "Open Phim Thô"
+    static let description = IntentDescription("Opens Phim Thô's RAW camera, even from the Lock Screen.")
 
     typealias AppContext = TrueShotCaptureContext
 

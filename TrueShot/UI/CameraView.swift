@@ -3,7 +3,7 @@ import SwiftUI
 
 struct CameraView: View {
     let model: CameraModel
-    /// Set on the Lock Screen: the settings button becomes "Open TrueShot" (unlock + open app),
+    /// Set on the Lock Screen: the settings button becomes "Open Phim Thô" (unlock + open app),
     /// since settings can't be saved back from the locked camera.
     var openApp: (() -> Void)? = nil
 
@@ -79,7 +79,7 @@ struct CameraView: View {
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                .accessibilityLabel(openApp == nil ? "Settings" : "Open TrueShot")
+                .accessibilityLabel(openApp == nil ? "Settings" : "Open Phim Thô")
 
                 Spacer()
                 statusCapsule

@@ -910,7 +910,7 @@ actor CaptureService {
             result.saved = true
             sink.yield(.message(String(localized: "Saved RAW and HEIC as separate photos (pairing failed: \(pairError)).")))
         case .notAuthorized:
-            sink.yield(.message(String(localized: "Couldn't save: allow TrueShot to add photos in Settings › Privacy › Photos.")))
+            sink.yield(.message(String(localized: "Couldn't save: allow Phim Thô to add photos in Settings › Privacy › Photos.")))
         case .failed(let error):
             sink.yield(.message(String(localized: "Couldn't save to Photos (\(error)).")))
         }

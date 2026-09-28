@@ -115,7 +115,7 @@ struct SettingsView: View {
         } header: {
             Text("Filters")
         } footer: {
-            Text("With a filter, grain or watermark on, TrueShot develops the RAW (no noise reduction or sharpening), applies them and saves a HEIC, with the untouched DNG attached as its RAW original. Turn this off to use looks only in the viewfinder (watermarks need it on).")
+            Text("With a filter, grain or watermark on, Phim Thô develops the RAW (no noise reduction or sharpening), applies them and saves a HEIC, with the untouched DNG attached as its RAW original. Turn this off to use looks only in the viewfinder (watermarks need it on).")
         }
     }
 
@@ -244,7 +244,7 @@ struct ExposureModesView: View {
                     }
                 }
             } footer: {
-                Text("When you choose a combination that isn't supported, TrueShot locks the remaining settings at their current values, making it fully manual.")
+                Text("When you choose a combination that isn't supported, Phim Thô locks the remaining settings at their current values, making it fully manual.")
             }
         }
         .navigationTitle("Exposure Modes")

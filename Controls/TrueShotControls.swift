@@ -15,10 +15,10 @@ struct TrueShotCameraControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: "com.thanhtu.TrueShot.camera") {
             ControlWidgetButton(action: TrueShotCaptureIntent()) {
-                Label("TrueShot", image: "trueshot.aperture")
+                Label("Phim Thô", image: "trueshot.aperture")
             }
         }
-        .displayName("TrueShot")
-        .description("Open TrueShot's RAW camera.")
+        .displayName("Phim Thô")
+        .description("Open Phim Thô's RAW camera.")
     }
 }

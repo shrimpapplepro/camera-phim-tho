@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>TrueShot</string>
+	<string>Phim Thô</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -24,8 +24,8 @@
 		<string>com.apple.securecapture</string>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>TrueShot uses the camera to capture unprocessed RAW photos.</string>
+	<string>Phim Thô uses the camera to capture unprocessed RAW photos.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>TrueShot saves your RAW (DNG) photos to your library.</string>
+	<string>Phim Thô saves your RAW (DNG) photos to your library.</string>
 </dict>
 </plist>
