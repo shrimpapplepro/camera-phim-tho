@@ -79,6 +79,9 @@ struct LiveReadout: Equatable, Sendable {
 struct CaptureResult: Sendable {
     var thumbnail: UIImage?          // from the RAW capture (unprocessed)
     var processed: UIImage?          // from the saved HEIC (look, grain, watermark)
+    /// The look without any watermark — the base for watermark previews (a baked-in watermark
+    /// would otherwise show under every style, even Off).
+    var clean: UIImage?
     var fNumber: Double?
     var exposureTime: Double?
     var iso: Double?

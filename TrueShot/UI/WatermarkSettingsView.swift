@@ -35,7 +35,8 @@ struct WatermarkSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: settings) {
             let capture = model.lastCapture
-            let base = (capture?.processed ?? capture?.thumbnail).flatMap(WatermarkPreview.upright)
+            // Never the processed image: it already carries the watermark it was saved with.
+            let base = (capture?.clean ?? capture?.thumbnail).flatMap(WatermarkPreview.upright)
             preview = await WatermarkPreview.render(settings, info: capture?.info ?? .sample, base: base)
         }
     }

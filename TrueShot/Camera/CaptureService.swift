@@ -893,6 +893,16 @@ actor CaptureService {
             }
         }
         if let heic { result.processed = Self.previewImage(from: heic) }
+        if watermark.isActive, heic != nil {
+            let dng = pending.dng, exposure = pending.exposureCorrection
+            result.clean = await Task.detached(priority: .utility) { () -> UIImage? in
+                let cube = filter.flatMap { LUTLibrary.shared.cube(for: $0.id) }
+                return FilteredDeveloper.previewBase(dng: dng, cube: cube, intensity: filter?.intensity ?? 1,
+                                                     grain: grain, exposure: exposure).map { UIImage(cgImage: $0) }
+            }.value
+        } else {
+            result.clean = result.processed
+        }
         switch await Self.saveToLibrary(dng: pending.dng, heic: heic) {
         case .saved:
             result.saved = true
