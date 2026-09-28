@@ -1,0 +1,98 @@
+name: TrueShot
+options:
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+  # XcodeGen tags .icon bundles as wrapper.icon; Xcode's Icon Composer type is folder.iconcomposer.icon.
+  postGenCommand: sed -i '' 's/lastKnownFileType = wrapper.icon;/lastKnownFileType = folder.iconcomposer.icon;/' TrueShot.xcodeproj/project.pbxproj
+settings:
+  base:
+    # Change this to your own reverse-DNS prefix before building (e.g. com.yourname).
+    BUNDLE_ID_PREFIX: com.thanhtu
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+targets:
+  TrueShot:
+    type: application
+    platform: iOS
+    sources:
+      - path: TrueShot
+        excludes: ["Resources/LUTs", "AppIcon.icon"]
+      - path: TrueShot/AppIcon.icon
+        type: file
+        buildPhase: resources
+      - path: TrueShot/Resources/LUTs
+        type: folder
+        buildPhase: resources
+      - path: Shared
+    dependencies:
+      - target: TrueShotControls
+      - target: TrueShotCapture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).TrueShot
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: TrueShot
+        INFOPLIST_KEY_NSCameraUsageDescription: "TrueShot uses the camera to capture unprocessed RAW photos."
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "TrueShot saves your RAW (DNG) photos to your library."
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIRequiredDeviceCapabilities: still-camera
+        INFOPLIST_KEY_UIStatusBarHidden: YES
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMPRESS_PNG_FILES: NO
+        STRIP_PNG_TEXT: NO
+
+  # Lock Screen / Control Center / Action button control that launches TrueShot.
+  TrueShotControls:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Controls
+      - Shared
+    info:
+      path: Controls/Info.plist
+      properties:
+        CFBundleDisplayName: TrueShot
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).TrueShot.Controls
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+
+  # The camera that runs over the Lock Screen (LockedCameraCapture, ExtensionKit).
+  # Same camera code as the app; LUTs are read from the containing app's bundle.
+  TrueShotCapture:
+    type: extensionkit-extension
+    platform: iOS
+    sources:
+      - path: TrueShot
+        excludes: ["App/**", "Resources/**", "AppIcon.icon"]
+      - Shared
+      - Capture
+    info:
+      path: Capture/Info.plist
+      properties:
+        CFBundleDisplayName: TrueShot
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.securecapture
+        NSCameraUsageDescription: "TrueShot uses the camera to capture unprocessed RAW photos."
+        NSPhotoLibraryAddUsageDescription: "TrueShot saves your RAW (DNG) photos to your library."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).TrueShot.Capture
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"

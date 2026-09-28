@@ -1,0 +1,86 @@
+{
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "foreground.png",
+          "name": "glyph",
+          "glass": true,
+          "position": {
+            "scale": 0.8,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "name": "Foreground",
+      "specular": true,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.45
+      },
+      "blur-material": null
+    },
+    {
+      "layers": [
+        {
+          "image-name": "Lens.png",
+          "name": "Lens",
+          "opacity": 1,
+          "blend-mode": "normal",
+          "glass": true,
+          "position": {
+            "scale": 0.8,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "name": "Lens",
+      "specular": true,
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.6
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared",
+    "circles": [
+      "watchOS"
+    ]
+  },
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.17255,0.17255,0.18039,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
+      }
+    }
+  ],
+  "fill": {
+    "linear-gradient": [
+      "srgb:0.22745,0.22745,0.23529,1.00000",
+      "srgb:0.07843,0.07843,0.08627,1.00000"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0,
+        "y": 0.5
+      },
+      "stop": {
+        "x": 1,
+        "y": 0.49999999999999994
+      }
+    }
+  }
+}

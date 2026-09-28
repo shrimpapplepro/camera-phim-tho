@@ -1,0 +1,5 @@
+# Packed LUTs are local-only: they may be third-party assets you're not allowed to redistribute.
+# Build your own library with tools/pack_luts.py; everything it writes here stays out of git.
+*
+!.gitignore
+!README.md
