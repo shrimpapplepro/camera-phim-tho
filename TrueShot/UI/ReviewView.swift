@@ -61,7 +61,8 @@ struct ReviewView: View {
                 let cube = pending.filter.flatMap { library.cube(for: $0.id) }
                 return FilteredDeveloper.previewBase(dng: pending.dng, cube: cube,
                                                      intensity: pending.filter?.intensity ?? 1,
-                                                     grain: pending.grain).map { CIImage(cgImage: $0) }
+                                                     grain: pending.grain,
+                                                     exposure: pending.exposureCorrection).map { CIImage(cgImage: $0) }
             }.value
             base = developed ?? pending.result.thumbnail.flatMap(WatermarkPreview.upright)
         }

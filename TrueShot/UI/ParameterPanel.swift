@@ -124,10 +124,19 @@ struct ParameterPanel: View {
         case .whiteBalance:
             String(localized: "Stored as the DNG's as-shot white point. RAW sensor data is not altered.")
         case .focus:
-            String(localized: "0 is the closest focus distance; 1 is the farthest.")
+            closestFocusNote
         default:
             nil
         }
+    }
+
+    private var closestFocusNote: String {
+        let mm = model.capabilities.minimumFocusDistance
+        guard mm > 0 else { return String(localized: "0 is the closest focus distance; 1 is the farthest.") }
+        let distance = mm >= 1000 ? String(format: "%.2f m", Double(mm) / 1000) : "\(mm / 10) cm"
+        return mm >= 500
+            ? String(localized: "This lens focuses from \(distance). For closer subjects, switch to 1×.")
+            : String(localized: "This lens focuses from \(distance). 0 is closest, 1 is farthest.")
     }
 
     private var currentText: String {

@@ -24,6 +24,30 @@ struct Preferences: Codable, Equatable, Sendable {
         }
     }
 
+    enum Flash: String, Codable, CaseIterable, Identifiable, Sendable {
+        case off, auto, on, pointAndShoot
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .off: String(localized: "Off")
+            case .auto: String(localized: "Auto")
+            case .on: String(localized: "On")
+            case .pointAndShoot: String(localized: "Point & Shoot")
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .off: "bolt.slash.fill"
+            case .auto: "bolt.badge.automatic.fill"
+            case .on: "bolt.fill"
+            case .pointAndShoot: "bolt.circle.fill"
+            }
+        }
+        /// Point & Shoot: auto exposure may not pick a shutter slower than this, to freeze the subject
+        /// (the LED-lit subject is metered; the unlit background falls dark on its own).
+        static let pointAndShootSlowestShutter: Double = 1.0 / 60
+    }
+
     enum Grid: String, Codable, CaseIterable, Identifiable, Sendable {
         case off, thirds, quarters, center
         var id: String { rawValue }
@@ -76,6 +100,9 @@ struct Preferences: Codable, Equatable, Sendable {
     // Metering
     var meterMode: MeterMode = .balanced
 
+    // Flash
+    var flash: Flash = .off
+
     // Adjustment
     var stepSize: StepSize = .tenth
     var snapApertureToStops = false
@@ -115,6 +142,7 @@ struct Preferences: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Preferences()
         meterMode = (try? c.decode(MeterMode.self, forKey: .meterMode)) ?? d.meterMode
+        flash = (try? c.decode(Flash.self, forKey: .flash)) ?? d.flash
         stepSize = (try? c.decode(StepSize.self, forKey: .stepSize)) ?? d.stepSize
         snapApertureToStops = (try? c.decode(Bool.self, forKey: .snapApertureToStops)) ?? d.snapApertureToStops
         dialSensitivity = (try? c.decode(Double.self, forKey: .dialSensitivity)) ?? d.dialSensitivity

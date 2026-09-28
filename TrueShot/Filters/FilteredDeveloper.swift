@@ -19,7 +19,7 @@ enum FilteredDeveloper {
     }()
 
     static func develop(dng: Data, cube: CubeLUT?, intensity: Float, grain: GrainSettings,
-                        watermark: WatermarkSettings = WatermarkSettings()) throws -> Data {
+                        watermark: WatermarkSettings = WatermarkSettings(), exposure: Float = 0) throws -> Data {
         guard let raw = CIRAWFilter(imageData: dng, identifierHint: UTType("com.adobe.raw-image")?.identifier) else {
             throw DevelopError.unreadableRAW
         }
@@ -27,6 +27,7 @@ enum FilteredDeveloper {
         if raw.isColorNoiseReductionSupported { raw.colorNoiseReductionAmount = 0 }
         if raw.isSharpnessSupported { raw.sharpnessAmount = 0 }
         if raw.isDetailSupported { raw.detailAmount = 0 }
+        if exposure != 0 { raw.exposure = exposure }
         // Keep the sensor orientation and carry the DNG's orientation tag, like Apple's own
         // RAW+HEIC pairs: Photos pairs the two files, so their geometry should match.
         let sourceOrientation = raw.orientation
@@ -61,12 +62,13 @@ enum FilteredDeveloper {
     /// A reduced, upright development of the DNG with the look and grain applied (no watermark),
     /// for the review sheet. The watermark is drawn on top of this live as the user edits it.
     static func previewBase(dng: Data, cube: CubeLUT?, intensity: Float, grain: GrainSettings,
-                            maxPixel: CGFloat = 1600) -> CGImage? {
+                            exposure: Float = 0, maxPixel: CGFloat = 1600) -> CGImage? {
         guard let raw = CIRAWFilter(imageData: dng, identifierHint: UTType("com.adobe.raw-image")?.identifier) else { return nil }
         if raw.isLuminanceNoiseReductionSupported { raw.luminanceNoiseReductionAmount = 0 }
         if raw.isColorNoiseReductionSupported { raw.colorNoiseReductionAmount = 0 }
         if raw.isSharpnessSupported { raw.sharpnessAmount = 0 }
         if raw.isDetailSupported { raw.detailAmount = 0 }
+        if exposure != 0 { raw.exposure = exposure }
         let native = max(raw.nativeSize.width, raw.nativeSize.height)
         if native > maxPixel { raw.scaleFactor = Float(maxPixel / native) }
         guard var image = raw.outputImage else { return nil }   // upright: orientation left at the file's value

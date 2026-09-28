@@ -25,6 +25,12 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
 **Capture**
 - Bayer RAW DNG only, with an optional embedded preview. Photos shows it with a RAW badge.
 - Physical lens switching (0.5× / 1× / tele), with labels derived from the device's own switch-over factors.
+  Each lens's closest focus distance is shown (telephotos often can't focus much closer than ~1 m; TrueShot
+  never secretly swaps to a cropped main lens), and manual focus resets per lens.
+- **Flash: Off / Auto / On / Point & Shoot.** The flash LED fires as a short, metered burst:
+  auto exposure settles on the lit scene, TrueShot's meter protects the lit subject's highlights (TTL-style),
+  and the shot is taken at 1/60 s with the lowest ISO, so the light is real and in the RAW.
+  Point & Shoot adds a film-like ISO 800 ceiling (only while the shutter is on auto). Your manual shutter/ISO are always kept.
 - Volume buttons and **Camera Control** trigger the shutter. Camera Control also adjusts exposure, aperture, shutter, ISO and focus.
 
 **Manual control, fine-grained**
@@ -45,6 +51,7 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
 - 3D LUT filters with a live viewfinder preview, per-look intensity, and thumbnails of your current scene.
   **The repo ships no LUTs.** Bring your own `.cube` files (see below).
 - **Film grain**: monochrome, strongest in the midtones, scaled to the image resolution, and moving in the viewfinder.
+- **Date Stamp**: the orange seven-segment `'26 9 28` of 90s compact film cameras, from each photo's capture time.
 - **Watermarks** filled from each photo's own metadata (camera model, lens, and the focal length, aperture,
   shutter and ISO actually used, plus the capture time). Styles: Light Bar, Dark Bar, Border and Overlay, with an optional signature.
   You can adjust the watermark on the real photo before saving.
@@ -143,6 +150,9 @@ Things this project learned the hard way:
 - Custom SF Symbols must use the current template layout (`Ultralight-S`/`Regular-S`/`Black-S` with local
   coordinates). An old-style `Regular-M` file compiles fine but draws as a blank control.
 - Xcode's `COMPRESS_PNG_FILES` would rewrite LUT PNGs, so it's disabled.
+- With `AVCapturePhotoSettings.flashMode` on, the photo pipeline chooses its own exposure (about 1/6 s at base ISO),
+  ignoring custom, locked, bias and max-duration settings. That's why TrueShot drives the LED as a torch burst and
+  takes a normal capture, falling back to Apple's flash (with a developed-HEIC correction) only if that fails.
 
 ## License
 

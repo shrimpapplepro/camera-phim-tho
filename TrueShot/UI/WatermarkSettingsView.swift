@@ -53,7 +53,12 @@ struct WatermarkFields: View {
             .pickerStyle(.inline)
             .labelsHidden()
         }
-        if settings.isActive {
+        if settings.style == .dateStamp {
+            Section {
+            } footer: {
+                Text("The orange date of compact film cameras, from the photo's capture time. Only the HEIC is stamped.")
+            }
+        } else if settings.isActive {
             Section {
                 Toggle("Camera Model", isOn: $settings.showModel)
                 Toggle("Lens", isOn: $settings.showLens)

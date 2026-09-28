@@ -8,7 +8,7 @@ import ImageIO
 
 struct WatermarkSettings: Codable, Equatable, Sendable {
     enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
-        case off, lightBar, darkBar, border, overlay
+        case off, lightBar, darkBar, border, overlay, dateStamp
         var id: String { rawValue }
         var label: String {
             switch self {
@@ -17,6 +17,7 @@ struct WatermarkSettings: Codable, Equatable, Sendable {
             case .darkBar: String(localized: "Dark Bar")
             case .border: String(localized: "Border")
             case .overlay: String(localized: "Overlay")
+            case .dateStamp: String(localized: "Date Stamp")
             }
         }
     }
@@ -126,6 +127,14 @@ struct PhotoInfo: Equatable, Sendable {
         return parts.isEmpty ? nil : parts.joined(separator: "  ")
     }
 
+    /// "'26 9 28" — the compact-film-camera date-back format.
+    var dateStampText: String? {
+        guard let raw = dateOriginal, raw.count >= 10 else { return nil }
+        let chars = Array(raw)
+        guard let month = Int(String(chars[5..<7])), let day = Int(String(chars[8..<10])) else { return nil }
+        return "'\(String(chars[2..<4])) \(month) \(day)"
+    }
+
     /// "2026.09.28 18:45"
     var dateText: String? {
         guard let raw = dateOriginal, raw.count >= 16 else { return nil }
@@ -185,7 +194,74 @@ enum Watermark {
         case .overlay:
             guard let text = drawOverlay(width: w, height: (w * 0.2).rounded(), lines: lines) else { return photo }
             return text.composited(over: photo).cropped(to: photo.extent)
+        case .dateStamp:
+            guard let stamp = info.dateStampText,
+                  let layer = drawDateStamp(stamp, width: w, height: h) else { return photo }
+            return layer.composited(over: photo).cropped(to: photo.extent)
         }
+    }
+
+    // MARK: Date stamp
+
+    /// The orange seven-segment date of 80s/90s compact film cameras, bottom-right, drawn as
+    /// geometry (no font dependency). `text` uses digits, spaces and an apostrophe.
+    private static func drawDateStamp(_ text: String, width w: CGFloat, height h: CGFloat) -> CIImage? {
+        let digitHeight = min(w, h) * 0.034
+        let digitWidth = digitHeight * 0.55
+        let stroke = digitHeight * 0.13
+        let gap = digitHeight * 0.18
+        let spaceWidth = digitWidth * 0.7
+        let tickWidth = digitWidth * 0.35
+
+        func advance(_ c: Character) -> CGFloat {
+            switch c {
+            case " ": spaceWidth
+            case "'": tickWidth + gap
+            default: digitWidth + gap
+            }
+        }
+        let textWidth = text.reduce(0) { $0 + advance($1) } - gap
+        let pad = digitHeight * 1.6
+        let boxW = (textWidth + pad * 2).rounded(.up), boxH = (digitHeight + pad * 2).rounded(.up)
+        guard let ctx = context(width: boxW, height: boxH) else { return nil }
+
+        // Warm LED orange with a soft bloom, like light burned into film from the back.
+        let orange = color(1.0, 0.55, 0.12, 0.95)
+        ctx.setShadow(offset: .zero, blur: digitHeight * 0.35, color: color(1.0, 0.45, 0.05, 0.9))
+        ctx.setFillColor(orange)
+
+        // Segment rectangles in a unit cell (x 0…1, y 0…1 bottom-up), mapped to the digit box.
+        let segments: [Character: String] = [
+            "0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc",
+            "5": "afgcd", "6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcdfg",
+        ]
+        func segmentRect(_ s: Character, x: CGFloat, y: CGFloat) -> CGRect {
+            let t = stroke, dw = digitWidth, dh = digitHeight, half = dh / 2
+            switch s {
+            case "a": return CGRect(x: x + t * 0.6, y: y + dh - t, width: dw - t * 1.2, height: t)
+            case "g": return CGRect(x: x + t * 0.6, y: y + half - t / 2, width: dw - t * 1.2, height: t)
+            case "d": return CGRect(x: x + t * 0.6, y: y, width: dw - t * 1.2, height: t)
+            case "f": return CGRect(x: x, y: y + half + t * 0.3, width: t, height: half - t * 0.9)
+            case "b": return CGRect(x: x + dw - t, y: y + half + t * 0.3, width: t, height: half - t * 0.9)
+            case "e": return CGRect(x: x, y: y + t * 0.6, width: t, height: half - t * 0.9)
+            default:  return CGRect(x: x + dw - t, y: y + t * 0.6, width: t, height: half - t * 0.9)  // c
+            }
+        }
+
+        var x = pad
+        let y = pad
+        for c in text {
+            if let segs = segments[c] {
+                for s in segs { ctx.fill(segmentRect(s, x: x, y: y)) }
+            } else if c == "'" {
+                ctx.fill(CGRect(x: x + tickWidth * 0.3, y: y + digitHeight * 0.68, width: stroke, height: digitHeight * 0.32))
+            }
+            x += advance(c)
+        }
+        guard let cg = ctx.makeImage() else { return nil }
+        let margin = min(w, h) * 0.05
+        return CIImage(cgImage: cg).transformed(by: CGAffineTransform(
+            translationX: w - boxW - margin + pad, y: margin - pad))
     }
 
     /// The strings, chosen by the user's field toggles.

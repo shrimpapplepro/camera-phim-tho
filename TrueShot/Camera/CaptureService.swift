@@ -111,6 +111,7 @@ actor CaptureService {
             Task { await finish(pending, watermark: watermark) }
         case .setPreferences(let newPrefs):
             let meterChanged = newPrefs.meterMode != prefs.meterMode
+            let flashChanged = newPrefs.flash != prefs.flash
             let rebuildControls = newPrefs.cameraControlItems != prefs.cameraControlItems
             let deviceChanged = newPrefs.faceDrivenAutoExposure != prefs.faceDrivenAutoExposure
                 || newPrefs.automaticExposureSignals != prefs.automaticExposureSignals
@@ -120,6 +121,7 @@ actor CaptureService {
             if deviceChanged, let device { applyPreferences(to: device) }
             if rebuildControls { rebuildSystemControls() }
             if meterChanged { installMeter(); resetMeter() }
+            if flashChanged, let device { applyFlashRecipe(to: device) }
         case .setActive(let active):
             isActive = active
             guard isConfigured else { return }
@@ -231,15 +233,23 @@ actor CaptureService {
         guard let device else { return }
         caps = makeCapabilities(for: device)
         applied = nil
+        // Lens positions are per-lens (0.272 is a different distance on each), so a manual focus
+        // from the previous lens is meaningless here: return to autofocus.
+        let focusWasManual = controls.focus != nil
+        controls.focus = nil
         meterBias = 0
         meterReading = nil
         wantAtLastStep = nil
         stalledSteps = 0
         applyPreferences(to: device)
+        applyFlashRecipe(to: device)
         controls = sanitized(controls, promoteFrom: controls)
         applyControls()
         rebuildSystemControls()
         sink.yield(.configured(lenses: lenses, lensID: device.uniqueID, capabilities: caps, controls: controls))
+        if focusWasManual {
+            sink.yield(.message(String(localized: "Focus returned to auto for this lens.")))
+        }
     }
 
     private func makeCapabilities(for device: AVCaptureDevice) -> CameraCapabilities {
@@ -262,8 +272,10 @@ actor CaptureService {
         c.isoRange = format.minISO...format.maxISO
         c.biasRange = device.minExposureTargetBias...device.maxExposureTargetBias
         c.manualFocus = device.isLockingFocusWithCustomLensPositionSupported
+        c.minimumFocusDistance = device.minimumFocusDistance   // mm, -1 if unknown
         c.manualWhiteBalance = device.isLockingWhiteBalanceWithCustomDeviceGainsSupported
         c.rawAvailable = photoOutput.availableRawPhotoPixelFormatTypes.contains { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) }
+        c.hasFlash = device.hasTorch   // the LED is driven as a torch burst (see fireLED)
         c.supportedExposureSignals = device.supportedExposureSignals.map(\.rawValue).sorted()
 
         // Which priority modes does this format accept? "Current" stands for "locked".
@@ -426,6 +438,111 @@ actor CaptureService {
         }
     }
 
+    // MARK: - Flash
+
+    /// True while a flash capture is in progress; the meter holds still meanwhile.
+    private var capturingWithFlash = false
+    /// Latest frame statistics from the meter (used as TTL metering for the LED flash).
+    private var lastMeterStats: (stats: MeterStats, time: Date)?
+
+    /// Slowest shutter auto exposure may choose while a flash mode is on — in the live view and so
+    /// for the LED-lit capture: Point & Shoot 1/60 s (freeze the subject), On 1/30 s.
+    private func applyFlashRecipe(to device: AVCaptureDevice) {
+        guard (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+        let format = device.activeFormat
+        let slowest: Double? = switch prefs.flash {
+        case .pointAndShoot: Preferences.Flash.pointAndShootSlowestShutter
+        case .on: 1.0 / 30
+        case .off, .auto: nil
+        }
+        if let slowest {
+            device.activeMaxExposureDuration = CMTime(seconds: slowest, preferredTimescale: 1_000_000_000)
+                .clamped(to: format.minExposureDuration...format.maxExposureDuration)
+        } else {
+            device.activeMaxExposureDuration = .invalid   // back to the device default
+        }
+    }
+
+    /// Auto flash: fire only in dim light (EV100 below 6, i.e. a dim interior).
+    private static func isDim(_ device: AVCaptureDevice) -> Bool {
+        let n = Double(device.lensAperture), t = device.exposureDuration.seconds, iso = Double(device.iso)
+        guard n > 0, t > 0, iso > 0 else { return false }
+        return log2(n * n / t) - log2(iso / 100) < 6
+    }
+
+    /// Turns the LED on at full power, lets auto exposure settle on the lit scene, then corrects it
+    /// with TrueShot's own meter (highlight protection keeps a close, lit subject from clipping — plain
+    /// AE averages in the dark background and overexposes it) and locks the result for the capture.
+    /// Manually set shutter/ISO are kept. Returns the exposure the capture should get.
+    private func fireLED(on device: AVCaptureDevice) async -> (seconds: Double, iso: Float) {
+        capturingWithFlash = true
+        if (try? device.lockForConfiguration()) != nil {
+            try? device.setTorchModeOn(level: AVCaptureDevice.maxAvailableTorchLevel)
+            // The meter correction was for the unlit room; the lit scene is metered fresh.
+            device.setExposureTargetBias(controls.bias.clamped(to: device.minExposureTargetBias...device.maxExposureTargetBias),
+                                         completionHandler: nil)
+            device.unlockForConfiguration()
+        }
+        let lit = Date()
+        try? await Task.sleep(for: .milliseconds(180))
+        for _ in 0..<10 where device.isAdjustingExposure { try? await Task.sleep(for: .milliseconds(60)) }
+        for _ in 0..<6 where (lastMeterStats?.time ?? .distantPast) < lit.addingTimeInterval(0.15) {
+            try? await Task.sleep(for: .milliseconds(50))                    // a frame metered with the LED on
+        }
+
+        let format = device.activeFormat
+        var t = controls.shutter ?? device.exposureDuration.seconds
+        var iso = controls.iso ?? device.iso
+        var ttl: Float = 0
+        if prefs.meterMode != .system, let reading = lastMeterStats, reading.time > lit {
+            ttl = Meter.correction(reading.stats, mode: prefs.meterMode).clamped(to: -3...1)
+        }
+        // Right after the LED comes on, AE sometimes settles on a strange split with the right total
+        // (seen on device: 1/3425 s at ISO 9446 ≈ 1/60 s at ISO 165). Re-balance to the slowest
+        // allowed shutter at the lowest ISO, before the TTL correction and the ISO cap — otherwise
+        // the cap throws the light away (that shot came out 3.5 EV dark).
+        // 1/60 s is the classic flash sync speed: sharp handheld under a continuous LED, lowest ISO.
+        if controls.shutter == nil, controls.iso == nil {
+            let target = Preferences.Flash.pointAndShootSlowestShutter
+            iso *= Float(t / target)
+            t = target
+        }
+        if controls.iso == nil {
+            iso *= powf(2, ttl)
+            // Point & Shoot's film-like ISO ceiling applies only while the shutter is automatic; a
+            // shutter the user picked gets full auto-ISO compensation.
+            if prefs.flash == .pointAndShoot, controls.shutter == nil { iso = min(iso, 800) }
+        } else if controls.shutter == nil {
+            t *= Double(powf(2, ttl))
+        }
+        let duration = CMTime(seconds: t, preferredTimescale: 1_000_000_000)
+            .clamped(to: format.minExposureDuration...format.maxExposureDuration)
+        iso = iso.clamped(to: format.minISO...format.maxISO)
+
+        if device.isExposureModeSupported(.custom), (try? device.lockForConfiguration()) != nil {
+            let aperture = AVCaptureDevice.currentLensAperture
+            if format.supportsExposureModeCustom(lensAperture: aperture, duration: duration, iso: iso) {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    device.setExposureModeCustom(lensAperture: aperture, duration: duration, iso: iso) { _ in continuation.resume() }
+                }
+            }
+            device.unlockForConfiguration()
+        }
+        return (duration.seconds, iso)
+    }
+
+    /// LED off; the user's exposure modes, bias and meter correction come back.
+    private func releaseLED() {
+        if let device, (try? device.lockForConfiguration()) != nil {
+            device.torchMode = .off
+            device.unlockForConfiguration()
+        }
+        capturingWithFlash = false
+        applied = nil
+        applyControls()
+    }
+
     // MARK: - Metering
 
     private func installMeter() {
@@ -453,7 +570,8 @@ actor CaptureService {
     /// deadband 0.25 EV, at most 0.3 EV per step, ≥ 0.25 s apart, only while AE has settled,
     /// and it stops pushing when its steps stop having an effect (see stall detection).
     private func meterUpdate(_ stats: MeterStats) {
-        guard prefs.meterMode != .system, isActive, let device else { return }
+        lastMeterStats = (stats, Date())
+        guard prefs.meterMode != .system, isActive, !capturingWithFlash, let device else { return }
         let want = Meter.correction(stats, mode: prefs.meterMode)
         meterReading = want
 
@@ -660,8 +778,61 @@ actor CaptureService {
             return
         }
 
+        // The photo pipeline's own flash replaces the exposure with its choice (verified on device:
+        // 1/60 ISO 800 locked → 1/6 ISO 100 captured). So the flash LED is driven as a short torch
+        // burst with TTL from TrueShot's meter, and the capture is a normal one that honours the
+        // exposure. If that capture fails, it falls back to Apple's flash once (see below).
+        var ledUsed = false
+        var wanted: (seconds: Double, iso: Float)?
+        if prefs.flash != .off, let device {
+            if device.hasTorch, device.isTorchAvailable {
+                if prefs.flash != .auto || Self.isDim(device) {
+                    wanted = await fireLED(on: device)
+                    ledUsed = true
+                }
+            } else {
+                sink.yield(.message(String(localized: "Flash isn't available right now on this lens.")))
+            }
+        }
+
+        var outcome = await shoot(makeSettings(rawType: rawType, rotationAngle: rotationAngle, appleFlash: false))
+        if ledUsed { releaseLED() }
+
+        // Fallback: Apple's flash. Its exposure is iOS's choice, so the HEIC is developed back to the
+        // exposure TrueShot wanted; the DNG keeps what iOS captured.
+        var exposureCorrection: Float = 0
+        if case .failure = outcome, ledUsed, photoOutput.supportedFlashModes.contains(.on) {
+            outcome = await shoot(makeSettings(rawType: rawType, rotationAngle: rotationAngle, appleFlash: true))
+            if case .success(let photo) = outcome, let wanted,
+               let t = photo.result.exposureTime, let iso = photo.result.iso, t > 0, iso > 0 {
+                exposureCorrection = Float(log2((wanted.seconds * Double(wanted.iso)) / (t * iso))).clamped(to: -4...2)
+            }
+            sink.yield(.message(String(localized: "The LED flash failed, so the standard flash was used.")))
+        }
+
+        switch outcome {
+        case .failure(let error):
+            sink.yield(.message(error.localizedDescription))
+        case .success(let photo):
+            var result = photo.result
+            result.flashFired = prefs.flash == .off ? nil : ledUsed
+            let info = PhotoInfo(dng: photo.dng)
+            result.info = info
+            let pending = PendingCapture(dng: photo.dng, result: result, filter: filter, grain: grain,
+                                         exposureCorrection: exposureCorrection)
+            if watermark.isActive, prefs.reviewWatermark, prefs.saveFilteredCopy {
+                // Nothing is saved yet: the review sheet settles the watermark, then calls finish.
+                sink.yield(.review(pending))
+            } else {
+                await finish(pending, watermark: watermark)
+            }
+        }
+    }
+
+    private func makeSettings(rawType: OSType, rotationAngle: CGFloat, appleFlash: Bool) -> AVCapturePhotoSettings {
         let settings = AVCapturePhotoSettings(rawPixelFormatType: rawType)
         settings.photoQualityPrioritization = .speed
+        if appleFlash { settings.flashMode = .on }     // caller checked supportedFlashModes
         if prefs.embedDNGPreview, let codec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first {
             settings.rawEmbeddedThumbnailPhotoFormat = [AVVideoCodecKey: codec]
         }
@@ -676,7 +847,10 @@ actor CaptureService {
            connection.isVideoRotationAngleSupported(rotationAngle) {
             connection.videoRotationAngle = rotationAngle
         }
+        return settings
+    }
 
+    private func shoot(_ settings: AVCapturePhotoSettings) async -> Result<CapturedPhoto, CameraError> {
         let id = settings.uniqueID
         let sink = self.sink
         let outcome: Result<CapturedPhoto, CameraError> = await withCheckedContinuation { continuation in
@@ -687,22 +861,7 @@ actor CaptureService {
             photoOutput.capturePhoto(with: settings, delegate: processor)
         }
         inFlight[id] = nil
-
-        switch outcome {
-        case .failure(let error):
-            sink.yield(.message(error.localizedDescription))
-        case .success(let photo):
-            var result = photo.result
-            let info = PhotoInfo(dng: photo.dng)
-            result.info = info
-            let pending = PendingCapture(dng: photo.dng, result: result, filter: filter, grain: grain)
-            if watermark.isActive, prefs.reviewWatermark, prefs.saveFilteredCopy {
-                // Nothing is saved yet: the review sheet settles the watermark, then calls finish.
-                sink.yield(.review(pending))
-            } else {
-                await finish(pending, watermark: watermark)
-            }
-        }
+        return outcome
     }
 
     /// Develop (when a look or watermark is set), save to Photos, and report the result.
@@ -710,7 +869,8 @@ actor CaptureService {
         let filter = pending.filter, grain = pending.grain
         var result = pending.result
         var heic: Data?
-        if filter != nil || grain.isActive || watermark.isActive, prefs.saveFilteredCopy {
+        let corrected = abs(pending.exposureCorrection) > 0.3
+        if filter != nil || grain.isActive || watermark.isActive || corrected, prefs.saveFilteredCopy {
             let dng = pending.dng
             heic = await Task.detached(priority: .userInitiated) { () -> Data? in
                 var cube: CubeLUT?
@@ -719,7 +879,8 @@ actor CaptureService {
                     cube = loaded
                 }
                 return try? FilteredDeveloper.develop(dng: dng, cube: cube, intensity: filter?.intensity ?? 1,
-                                                      grain: grain, watermark: watermark)
+                                                      grain: grain, watermark: watermark,
+                                                      exposure: pending.exposureCorrection)
             }.value
             if heic == nil {
                 sink.yield(.message(String(localized: "The filtered copy couldn't be made. The RAW was still saved.")))

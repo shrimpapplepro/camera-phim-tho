@@ -114,10 +114,32 @@ struct CameraView: View {
                 LensPicker(model: model)
             }
             HStack {
+                if model.capabilities.hasFlash { flashButton }
                 Spacer()
                 lookButton
             }
         }
+    }
+
+    /// Bottom-left: flash mode menu (Off / Auto / On / Point & Shoot).
+    private var flashButton: some View {
+        @Bindable var model = model
+        let mode = model.preferences.flash
+        return Menu {
+            Picker("Flash", selection: $model.preferences.flash) {
+                ForEach(Preferences.Flash.allCases) { option in
+                    Label(option.label, systemImage: option.symbol).tag(option)
+                }
+            }
+        } label: {
+            Image(systemName: mode.symbol)
+                .font(.body.weight(.medium))
+                .foregroundStyle(mode == .off ? Color.primary : Color.yellow)
+                .frame(width: 44, height: 44)
+        }
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("Flash")
+        .accessibilityValue(mode.label)
     }
 
     private var lookButton: some View {
@@ -519,6 +541,9 @@ struct LastCaptureView: View {
                 Section {
                     LabeledContent("Format", value: capture.filterName == nil ? "Bayer RAW · DNG" : "HEIC + Bayer RAW DNG")
                     if let filter = capture.filterName { LabeledContent("Look", value: filter) }
+                    if let fired = capture.flashFired {
+                        LabeledContent("Flash", value: fired ? String(localized: "Fired") : String(localized: "Didn't fire"))
+                    }
                     if let f = capture.fNumber { LabeledContent("Aperture", value: ExposureMath.apertureText(Float(f))) }
                     if let t = capture.exposureTime { LabeledContent("Shutter", value: ExposureMath.shutterText(t)) }
                     if let iso = capture.iso { LabeledContent("ISO", value: ExposureMath.isoText(Float(iso))) }

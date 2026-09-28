@@ -29,8 +29,11 @@ struct CameraCapabilities: Equatable, Sendable {
     var isoRange: ClosedRange<Float> = 50...3200
     var biasRange: ClosedRange<Float> = -8...8
     var manualFocus = false
+    /// Closest focus distance in millimetres (-1 when the lens doesn't report it).
+    var minimumFocusDistance = -1
     var manualWhiteBalance = false
     var rawAvailable = false
+    var hasFlash = false
     /// Manual-axis combinations the format accepts (`supportsExposureModeCustom`).
     var supportedCombos: Set<UInt8> = [0]
     var supportedExposureSignals: [String] = []
@@ -84,6 +87,8 @@ struct CaptureResult: Sendable {
     var saved = false
     var filterName: String?
     var info: PhotoInfo?
+    /// Whether the flash fired for this frame (from the resolved capture settings).
+    var flashFired: Bool?
     var date = Date()
 }
 
@@ -94,6 +99,8 @@ struct PendingCapture: Identifiable, Sendable {
     let result: CaptureResult
     let filter: FilterSelection?
     let grain: GrainSettings
+    /// EV applied when developing the HEIC (Apple-flash fallback); the DNG is never changed.
+    var exposureCorrection: Float = 0
 }
 
 enum CameraEvent: Sendable {
