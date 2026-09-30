@@ -33,6 +33,8 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
   auto exposure settles on the lit scene, TrueShot's meter protects the lit subject's highlights (TTL-style),
   and the shot is taken at 1/60 s with the lowest ISO, so the light is real and in the RAW.
   Point & Shoot adds a film-like ISO 800 ceiling (only while the shutter is on auto). Your manual shutter/ISO are always kept.
+- **Landscape and upside-down shots** come out upright, even with rotation lock on: orientation is read from
+  gravity, and the icons turn with the phone.
 - Volume buttons and **Camera Control** trigger the shutter. Camera Control also adjusts exposure, aperture, shutter, ISO and focus.
 
 **Manual control, fine-grained**
@@ -54,10 +56,19 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
   **Favorites** (tap and hold a look to add it; tap and hold in ★ Favorites to remove it).
   **The repo ships no LUTs.** Bring your own `.cube` files (see below).
 - **Film grain**: monochrome, strongest in the midtones, scaled to the image resolution, and moving in the viewfinder.
-- **Date Stamp**: the orange seven-segment `'26 9 28` of 90s compact film cameras, from each photo's capture time.
+- **Date Stamp**: the orange seven-segment `'26 9 28  18:45` of 90s compact film cameras, from each photo's
+  capture time (the time is optional).
 - **Watermarks** filled from each photo's own metadata (camera model, lens, and the focal length, aperture,
-  shutter and ISO actually used, plus the capture time). Styles: Light Bar, Dark Bar, Border and Overlay, with an optional signature.
-  You can adjust the watermark on the real photo before saving.
+  shutter and ISO actually used, plus the capture time). Styles: Light Bar, Dark Bar, Border, Shot On, Overlay
+  and CinemaScope (2.39:1 letterbox), with an optional signature. Every photo uses the style set in Settings.
+- **Film frames**: **35mm Strip** (135 film with KS-1870 sprocket holes, cropped to 3:2) and **Medium Format 6×6**
+  (120 film, square), with your look's name printed on the edge as the film stock, plus frame numbers.
+
+**Your photos stay in the app first**
+- Every shot is kept inside Phim Thô (DNG, plus the HEIC when a look, grain or watermark is on). Nothing goes to
+  your library by itself.
+- Tap the thumbnail to see your photos: switch between the processed HEIC and the RAW, read the metadata,
+  **Save to Photos** (HEIC with the DNG attached as its RAW original) or **Delete**.
 
 **Front camera**
 - The Center Stage front camera's square "open gate" sensor: swap **portrait ⇄ landscape without rotating the phone**
@@ -66,8 +77,8 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
 
 **Lock Screen camera**
 - A Control (with a custom aperture SF Symbol) for the **Lock Screen**, **Control Center** and **Action button**.
-- A **Locked Camera Capture** extension runs TrueShot's full camera over the Lock Screen and saves to Photos while
-  the phone is locked. The app hands its current settings to the extension through the capture intent's app context.
+- A **Locked Camera Capture** extension runs TrueShot's full camera over the Lock Screen. Photos taken there are
+  moved into the app the next time you open it. The app hands its current settings to the extension through the capture intent's app context.
 
 ## Requirements
 
@@ -166,6 +177,20 @@ Things this project learned the hard way:
 - With `AVCapturePhotoSettings.flashMode` on, the photo pipeline chooses its own exposure (about 1/6 s at base ISO),
   ignoring custom, locked, bias and max-duration settings. That's why TrueShot drives the LED as a torch burst and
   takes a normal capture, falling back to Apple's flash (with a developed-HEIC correction) only if that fails.
+
+## Credits
+
+The film frames and watermark layouts were chosen from these open-source projects. TrueShot's versions are
+written from scratch in Swift (Core Graphics / Core Image); no code was copied from them. Thank you to their authors.
+
+- [ComfyUI-Darkroom](https://github.com/jeremieLouvaert/ComfyUI-Darkroom) by jeremieLouvaert (MIT): the 135 and
+  120 film rebates, perforations and edge printing behind **35mm Strip** and **Medium Format 6×6**.
+- [film-borders](https://github.com/romnn/film-borders) by romnn (MIT): 35mm and 120 film borders.
+- [exif-frame](https://github.com/yurucam/exif-frame) by yurucam (GPL-3.0): the **Shot On** and **CinemaScope**
+  frame themes. Only the look was used as a reference; none of its code is included.
+
+Film dimensions (135: 36 × 24 mm image, 35 mm film, 2.794 × 1.98 mm perforations at 4.75 mm pitch; 120: 56 × 56 mm
+image on 61.5 mm film) are the published film standards.
 
 ## License
 

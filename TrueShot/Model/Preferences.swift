@@ -132,7 +132,6 @@ struct Preferences: Codable, Equatable, Sendable {
     var favoriteLooks: [String] = []
     var grain = GrainSettings()
     var watermark = WatermarkSettings()
-    var reviewWatermark = true
 
     // Camera Control button
     var cameraControlItems: [CameraControlItem] = [.exposureBias, .aperture, .shutter, .iso]
@@ -165,7 +164,6 @@ struct Preferences: Codable, Equatable, Sendable {
         grain = (try? c.decode(GrainSettings.self, forKey: .grain)) ?? d.grain
         favoriteLooks = (try? c.decode([String].self, forKey: .favoriteLooks)) ?? d.favoriteLooks
         watermark = (try? c.decode(WatermarkSettings.self, forKey: .watermark)) ?? d.watermark
-        reviewWatermark = (try? c.decode(Bool.self, forKey: .reviewWatermark)) ?? d.reviewWatermark
     }
 
     private static let key = "TrueShot.preferences.v1"

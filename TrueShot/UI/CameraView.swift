@@ -9,7 +9,7 @@ struct CameraView: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var showSettings = false
-    @State private var showLastCapture = false
+    @State private var showPhotos = false
     @State private var flash = false
 
     var body: some View {
@@ -36,13 +36,8 @@ struct CameraView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(model: model)
         }
-        .sheet(item: Binding(get: { model.pendingReview }, set: { if $0 == nil { model.discardReview() } })) { pending in
-            ReviewView(model: model, pending: pending)
-        }
-        .sheet(isPresented: $showLastCapture) {
-            if let capture = model.lastCapture {
-                LastCaptureView(capture: capture)
-            }
+        .sheet(isPresented: $showPhotos) {
+            PhotoLibraryView(store: model.store)
         }
     }
 
@@ -76,6 +71,7 @@ struct CameraView: View {
                     Image(systemName: openApp == nil ? "gearshape" : "arrow.up.forward.app")
                         .font(.body.weight(.medium))
                         .frame(width: 30, height: 30)
+                        .rotationEffect(.degrees(model.iconRotation))
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
@@ -91,6 +87,7 @@ struct CameraView: View {
                     Text("A")
                         .font(.body.weight(.bold))
                         .frame(width: 30, height: 30)
+                        .rotationEffect(.degrees(model.iconRotation))
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
@@ -129,6 +126,7 @@ struct CameraView: View {
                 .font(.body.weight(.medium))
                 .foregroundStyle(mode == .off ? Color.primary : Color.yellow)
                 .frame(width: 44, height: 44)
+                .rotationEffect(.degrees(model.iconRotation))
         }
         .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel("Flash")
@@ -141,20 +139,23 @@ struct CameraView: View {
         let name = parts.joined(separator: " + ")
         // Shortened so the capsule never reaches the centred lens buttons (~95 pt of caption text).
         let shown = name.count > 16 ? String(name.prefix(15)) + "…" : name
+        // Held sideways, only the (upright) icon shows; orange still marks an active look.
+        let showName = model.lookActive && !model.isDeviceLandscape
         return Button {
             withAnimation(.smooth(duration: 0.25)) { model.showFilters = true }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "camera.filters")
                     .font(.body.weight(.medium))
-                if model.lookActive {
+                    .rotationEffect(.degrees(model.iconRotation))
+                if showName {
                     Text(shown)
                         .font(.caption.weight(.semibold))
                         .lineLimit(1)
                 }
             }
             .foregroundStyle(model.lookActive ? Color.orange : Color.primary)
-            .padding(.horizontal, model.lookActive ? 12 : 0)
+            .padding(.horizontal, showName ? 12 : 0)
             .frame(minWidth: 44, minHeight: 44)
             .fixedSize()
         }
@@ -162,7 +163,7 @@ struct CameraView: View {
         .glassEffect(.regular.interactive(), in: .capsule)
         .accessibilityLabel("Filters")
         .accessibilityValue(model.lookActive ? name : String(localized: "None"))
-        .animation(.smooth(duration: 0.25), value: model.lookActive)
+        .animation(.smooth(duration: 0.25), value: showName)
     }
 
     private var statusCapsule: some View {
@@ -246,6 +247,7 @@ struct CameraView: View {
                     Label("Camera Paused", systemImage: "pause.circle")
                         .padding()
                         .glassEffect(.regular, in: .capsule)
+                        .rotationEffect(.degrees(model.iconRotation))
                 }
             }
     }
@@ -255,13 +257,14 @@ struct CameraView: View {
     private var bottomBar: some View {
         HStack {
             Button {
-                showLastCapture = true
+                showPhotos = true
             } label: {
-                ThumbnailView(image: model.lastCapture?.processed ?? model.lastCapture?.thumbnail)
+                ThumbnailView(image: model.store.photos.first.flatMap(model.store.thumbnail(for:)))
+                    .rotationEffect(.degrees(model.iconRotation))
             }
             .buttonStyle(.plain)
-            .disabled(model.lastCapture == nil)
-            .accessibilityLabel("Last photo")
+            .disabled(model.store.photos.isEmpty)
+            .accessibilityLabel("Photos")
 
             Spacer()
             ShutterButton(enabled: model.status == .running && model.capabilities.rawAvailable,
@@ -277,6 +280,7 @@ struct CameraView: View {
                     Image(systemName: "arrow.triangle.2.circlepath.camera")
                         .font(.title3.weight(.medium))
                         .frame(width: 44, height: 44)
+                        .rotationEffect(.degrees(model.iconRotation))
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
@@ -325,6 +329,7 @@ struct ParameterStrip: View {
                     .minimumScaleFactor(0.7)
                     .foregroundStyle(manual ? Color.yellow : Color.primary)
             }
+            .rotationEffect(.degrees(model.iconRotation))
             .frame(maxWidth: .infinity, minHeight: 44)
             .padding(.vertical, 4)
             .contentShape(.rect)
@@ -367,6 +372,7 @@ struct LensPicker: View {
                             .font(.footnote.weight(.semibold).monospacedDigit())
                             .foregroundStyle(active ? Color.yellow : Color.primary)
                             .frame(width: 44, height: 44)
+                            .rotationEffect(.degrees(model.iconRotation))
                     }
                     .buttonStyle(.plain)
                     .glassEffect(active ? .regular.interactive() : .clear.interactive(), in: .circle)
@@ -381,6 +387,7 @@ struct LensPicker: View {
                             .font(.footnote.weight(.semibold))
                             .frame(width: 44, height: 44)
                             .contentTransition(.symbolEffect(.replace))
+                            .rotationEffect(.degrees(model.iconRotation))
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
@@ -524,68 +531,5 @@ struct PermissionView: View {
             }
             .buttonStyle(.glassProminent)
         }
-    }
-}
-
-struct LastCaptureView: View {
-    let capture: CaptureResult
-    @Environment(\.dismiss) private var dismiss
-    @State private var showRAW = false
-
-    private var shown: UIImage? {
-        if showRAW || capture.processed == nil { return capture.thumbnail }
-        return capture.processed
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                if capture.processed != nil {
-                    Picker("Version", selection: $showRAW) {
-                        Text("Processed").tag(false)
-                        Text("RAW").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                }
-                if let image = shown {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(.rect(cornerRadius: 12))
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                        .accessibilityLabel(showRAW || capture.processed == nil ? "RAW preview" : "Processed photo")
-                }
-                Section {
-                    LabeledContent("Format", value: capture.filterName == nil ? "Bayer RAW · DNG" : "HEIC + Bayer RAW DNG")
-                    if let filter = capture.filterName { LabeledContent("Look", value: filter) }
-                    if let fired = capture.flashFired {
-                        LabeledContent("Flash", value: fired ? String(localized: "Fired") : String(localized: "Didn't fire"))
-                    }
-                    if let f = capture.fNumber { LabeledContent("Aperture", value: ExposureMath.apertureText(Float(f))) }
-                    if let t = capture.exposureTime { LabeledContent("Shutter", value: ExposureMath.shutterText(t)) }
-                    if let iso = capture.iso { LabeledContent("ISO", value: ExposureMath.isoText(Float(iso))) }
-                    if let size = capture.pixelSize, size.width > 0 {
-                        LabeledContent("Dimensions", value: "\(Int(size.width)) × \(Int(size.height))")
-                    }
-                    LabeledContent("File Size", value: capture.byteCount.formatted(.byteCount(style: .file)))
-                    LabeledContent("Saved to Photos", value: capture.saved ? String(localized: "Yes") : String(localized: "No"))
-                } footer: {
-                    Text(capture.filterName == nil
-                         ? "The preview above is a small viewing image. The DNG contains the sensor data without fusion, HDR or noise reduction."
-                         : "Processed shows the saved HEIC. RAW shows the camera's quick preview of the untouched DNG, which is attached to the same photo as its RAW original.")
-                }
-            }
-            .navigationTitle("Last Photo")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
     }
 }

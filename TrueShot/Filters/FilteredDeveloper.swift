@@ -19,7 +19,8 @@ enum FilteredDeveloper {
     }()
 
     static func develop(dng: Data, cube: CubeLUT?, intensity: Float, grain: GrainSettings,
-                        watermark: WatermarkSettings = WatermarkSettings(), exposure: Float = 0) throws -> Data {
+                        watermark: WatermarkSettings = WatermarkSettings(), filmName: String? = nil,
+                        exposure: Float = 0) throws -> Data {
         guard let raw = CIRAWFilter(imageData: dng, identifierHint: UTType("com.adobe.raw-image")?.identifier) else {
             throw DevelopError.unreadableRAW
         }
@@ -41,7 +42,8 @@ enum FilteredDeveloper {
         // A watermark is laid out on the upright picture, so that output is stored upright (orientation 1).
         var outputOrientation = sourceOrientation
         if watermark.isActive {
-            filtered = Watermark.apply(watermark, info: PhotoInfo(dng: dng), to: filtered.oriented(sourceOrientation))
+            filtered = Watermark.apply(watermark, info: PhotoInfo(dng: dng), filmName: filmName,
+                                       to: filtered.oriented(sourceOrientation))
             outputOrientation = .up
         }
 

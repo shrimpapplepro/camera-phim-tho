@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import CoreMotion
 import Observation
 import SwiftUI
 
@@ -8,7 +9,9 @@ import SwiftUI
 final class CameraModel {
     enum Status: Equatable { case starting, running, unauthorized, failed(String) }
 
-    let service = CaptureService()
+    let service: CaptureService
+    /// Photos taken with the app, kept here until saved to Photos or deleted.
+    let store: PhotoStore
     @ObservationIgnored private let intentStream: AsyncStream<CameraIntent>
     @ObservationIgnored private let intents: AsyncStream<CameraIntent>.Continuation
 
@@ -18,13 +21,19 @@ final class CameraModel {
     var capabilities = CameraCapabilities()
     var controls = ControlState()
     var readout = LiveReadout()
+    /// The latest capture this session (for the watermark preview in Settings).
     var lastCapture: CaptureResult?
     var captureCount = 0
     var message: String?
     var systemControlsFullscreen = false
     var focusReticle: CGPoint?
-    /// A capture waiting for watermark review. The shutter is disabled while it is set.
-    var pendingReview: PendingCapture?
+    /// How the phone is physically held, from gravity. The interface is portrait-only and iOS
+    /// reports portrait while rotation lock is on, so neither can tell a landscape shot.
+    private(set) var deviceOrientation: AVCaptureVideoOrientation = .portrait
+    /// Rotation that keeps icons upright (degrees, clockwise). Cumulative, so a turn animates
+    /// the short way round instead of spinning 270°.
+    private(set) var iconRotation: Double = 0
+    var isDeviceLandscape: Bool { deviceOrientation == .landscapeLeft || deviceOrientation == .landscapeRight }
     var showFilters = false {
         didSet {
             guard showFilters != oldValue else { return }
@@ -61,9 +70,13 @@ final class CameraModel {
     @ObservationIgnored private var reticleTask: Task<Void, Never>?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var contextTask: Task<Void, Never>?
+    @ObservationIgnored private let motion = CMMotionManager()
 
-    init() {
+    /// `photoFolder`: the app's photos, or the Lock Screen session's content directory.
+    init(photoFolder: PhotoFolder = .app) {
         (intentStream, intents) = AsyncStream.makeStream(of: CameraIntent.self)
+        service = CaptureService(folder: photoFolder)
+        store = PhotoStore(folder: photoFolder)
         preferences = Preferences.load()
         if preferences.rememberControls, let saved = Preferences.loadControls() {
             controls = saved
@@ -73,6 +86,7 @@ final class CameraModel {
     func start() {
         guard !started else { return }
         started = true
+        startOrientationUpdates()
         publishAppContext()
         let service = service
         let stream = intentStream
@@ -81,6 +95,10 @@ final class CameraModel {
         Task.detached { await service.run(intents: stream, preferences: prefs, initialControls: initial) }
         Task {
             for await event in service.events { handle(event) }
+        }
+        if !AppRuntime.isExtension {
+            let store = store
+            Task { await store.importLockedCameraContent() }
         }
     }
 
@@ -103,10 +121,9 @@ final class CameraModel {
             self.readout = readout
         case .willCapture:
             captureCount += 1
-        case .review(let pending):
-            pendingReview = pending
-        case .captured(let result):
+        case .captured(let result, let stored):
             lastCapture = result
+            if let stored { store.insert(stored) }
         case .message(let text):
             show(text)
         case .unauthorized:
@@ -223,30 +240,59 @@ final class CameraModel {
     }
 
     func capture() {
-        guard status == .running, !readout.isInterrupted, pendingReview == nil else { return }
+        guard status == .running, !readout.isInterrupted else { return }
         guard capabilities.rawAvailable else {
             show(String(localized: "RAW capture isn't available on this lens."))
             return
         }
-        let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        // Upright for the way the phone is held; the coordinator knows each camera's mounting.
+        let angle = rotationCoordinator?.videoRotationAngleRelative(toDeviceOrientation: deviceOrientation) ?? 90
+        #if DEBUG
+        print("TrueShot: capture held \(deviceOrientation.rawValue) (1 portrait, 2 upside down, 3 port right, 4 port left) → angle \(Int(angle))")
+        #endif
         intents.yield(.capture(rotationAngle: angle, filter: preferences.filter, grain: preferences.grain,
                                watermark: preferences.watermark))
     }
 
-    /// Save the reviewed capture with the chosen watermark (which also becomes the default).
-    func saveReview(watermark: WatermarkSettings) {
-        guard let pending = pendingReview else { return }
-        preferences.watermark = watermark
-        pendingReview = nil
-        intents.yield(.finishCapture(pending, watermark: watermark))
-    }
-
-    func discardReview() {
-        pendingReview = nil
-    }
-
     func setActive(_ active: Bool) {
         intents.yield(.setActive(active))
+        if active { startOrientationUpdates() } else { motion.stopAccelerometerUpdates() }
+    }
+
+    // MARK: Physical orientation
+
+    private func startOrientationUpdates() {
+        guard motion.isAccelerometerAvailable, !motion.isAccelerometerActive else { return }
+        motion.accelerometerUpdateInterval = 0.1
+        motion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
+            guard let g = data?.acceleration else { return }
+            MainActor.assumeIsolated { self?.updateOrientation(x: g.x, y: g.y, z: g.z) }
+        }
+    }
+
+    /// Gravity in device axes (portrait upright: y = -1; port on the right: x = -1).
+    /// Changes only when one axis clearly dominates, so ~45° and lying flat keep the last value.
+    private func updateOrientation(x: Double, y: Double, z: Double) {
+        guard abs(z) < 0.8 else { return }
+        let next: AVCaptureVideoOrientation
+        if abs(x) > abs(y) + 0.3 {
+            next = x < 0 ? .landscapeRight : .landscapeLeft
+        } else if abs(y) > abs(x) + 0.3 {
+            next = y < 0 ? .portrait : .portraitUpsideDown
+        } else {
+            return
+        }
+        guard next != deviceOrientation else { return }
+        deviceOrientation = next
+        let target: Double = switch next {
+        case .landscapeRight: 90
+        case .landscapeLeft: -90
+        case .portraitUpsideDown: 180
+        default: 0
+        }
+        var delta = (target - iconRotation).truncatingRemainder(dividingBy: 360)
+        if delta > 180 { delta -= 360 } else if delta < -180 { delta += 360 }
+        withAnimation(.smooth(duration: 0.3)) { iconRotation += delta }
     }
 
     // MARK: Preview
@@ -281,6 +327,11 @@ final class CameraModel {
               let device = AVCaptureDevice(uniqueID: lensID) else { return }
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
         rotationCoordinator = coordinator
+        #if DEBUG
+        let angles = [AVCaptureVideoOrientation.portrait, .landscapeRight, .landscapeLeft, .portraitUpsideDown]
+            .map { Int(coordinator.videoRotationAngleRelative(toDeviceOrientation: $0)) }
+        print("TrueShot: capture angles for \(device.localizedName) [portrait, port right, port left, upside down]: \(angles)")
+        #endif
         rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) { [weak self] coordinator, _ in
             let angle = coordinator.videoRotationAngleForHorizonLevelPreview
             Task { @MainActor in self?.applyPreviewAngle(angle) }

@@ -8,8 +8,10 @@ import ImageIO
 
 struct WatermarkSettings: Codable, Equatable, Sendable {
     enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
-        case off, lightBar, darkBar, border, overlay, dateStamp
+        case off, lightBar, darkBar, border, shotOn, overlay, dateStamp, filmStrip, mediumFormat, cinemaScope
         var id: String { rawValue }
+        /// Styles that print only film markings (edge text, frame numbers), not the photo's details.
+        var isFilm: Bool { self == .filmStrip || self == .mediumFormat }
         var label: String {
             switch self {
             case .off: String(localized: "Off")
@@ -18,6 +20,10 @@ struct WatermarkSettings: Codable, Equatable, Sendable {
             case .border: String(localized: "Border")
             case .overlay: String(localized: "Overlay")
             case .dateStamp: String(localized: "Date Stamp")
+            case .shotOn: String(localized: "Shot On")
+            case .filmStrip: String(localized: "35mm Strip")
+            case .mediumFormat: String(localized: "Medium Format 6×6")
+            case .cinemaScope: String(localized: "CinemaScope")
             }
         }
     }
@@ -27,6 +33,8 @@ struct WatermarkSettings: Codable, Equatable, Sendable {
     var showLens = true
     var showExposure = true
     var showDate = true
+    /// Date Stamp only: add hours and minutes after the date.
+    var stampTime = true
     var signature = ""
 
     var isActive: Bool { style != .off }
@@ -41,6 +49,7 @@ struct WatermarkSettings: Codable, Equatable, Sendable {
         showLens = (try? c.decode(Bool.self, forKey: .showLens)) ?? d.showLens
         showExposure = (try? c.decode(Bool.self, forKey: .showExposure)) ?? d.showExposure
         showDate = (try? c.decode(Bool.self, forKey: .showDate)) ?? d.showDate
+        stampTime = (try? c.decode(Bool.self, forKey: .stampTime)) ?? d.stampTime
         signature = (try? c.decode(String.self, forKey: .signature)) ?? d.signature
     }
 }
@@ -48,7 +57,7 @@ struct WatermarkSettings: Codable, Equatable, Sendable {
 // MARK: - Metadata
 
 /// What the watermark prints, read from the photo's own Exif/TIFF metadata.
-struct PhotoInfo: Equatable, Sendable {
+struct PhotoInfo: Codable, Equatable, Sendable {
     var make: String?
     var model: String?
     var lensModel: String?
@@ -127,12 +136,25 @@ struct PhotoInfo: Equatable, Sendable {
         return parts.isEmpty ? nil : parts.joined(separator: "  ")
     }
 
-    /// "'26 9 28" — the compact-film-camera date-back format.
-    var dateStampText: String? {
+    /// "'26 9 28", or "'26 9 28  18:45" with the time — the compact-film-camera date-back format.
+    func dateStampText(withTime: Bool) -> String? {
         guard let raw = dateOriginal, raw.count >= 10 else { return nil }
         let chars = Array(raw)
         guard let month = Int(String(chars[5..<7])), let day = Int(String(chars[8..<10])) else { return nil }
-        return "'\(String(chars[2..<4])) \(month) \(day)"
+        let date = "'\(String(chars[2..<4])) \(month) \(day)"
+        // Exif "yyyy:MM:dd HH:mm:ss": hours at 11…12, minutes at 14…15.
+        guard withTime, chars.count >= 16,
+              Int(String(chars[11..<13])) != nil, Int(String(chars[14..<16])) != nil else { return date }
+        return "\(date)  \(String(chars[11..<13])):\(String(chars[14..<16]))"
+    }
+
+    /// A frame number for film edge printing, 1…`count`, taken from the capture time so it
+    /// changes from shot to shot (there's no real roll to count).
+    func frameNumber(of count: Int) -> Int {
+        guard let raw = dateOriginal, raw.count >= 19 else { return 1 }
+        let chars = Array(raw)
+        let h = Int(String(chars[11..<13])) ?? 0, m = Int(String(chars[14..<16])) ?? 0, sec = Int(String(chars[17..<19])) ?? 0
+        return (h * 3600 + m * 60 + sec) % count + 1
     }
 
     /// "2026.09.28 18:45"
@@ -164,7 +186,8 @@ enum Watermark {
                                       secondary: color(0.62, 0.62, 0.65), rule: color(0.26, 0.26, 0.28))
 
     /// `image` must be upright (display orientation). Returns the framed image, origin at zero.
-    static func apply(_ settings: WatermarkSettings, info: PhotoInfo, to image: CIImage) -> CIImage {
+    /// `filmName` is the look's name, printed as the film stock on the film styles.
+    static func apply(_ settings: WatermarkSettings, info: PhotoInfo, filmName: String? = nil, to image: CIImage) -> CIImage {
         guard settings.isActive else { return image }
         let photo = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
         let w = photo.extent.width, h = photo.extent.height
@@ -195,16 +218,241 @@ enum Watermark {
             guard let text = drawOverlay(width: w, height: (w * 0.2).rounded(), lines: lines) else { return photo }
             return text.composited(over: photo).cropped(to: photo.extent)
         case .dateStamp:
-            guard let stamp = info.dateStampText,
+            guard let stamp = info.dateStampText(withTime: settings.stampTime),
                   let layer = drawDateStamp(stamp, width: w, height: h) else { return photo }
             return layer.composited(over: photo).cropped(to: photo.extent)
+        case .shotOn:
+            return shotOn(photo, lines: lines) ?? photo
+        case .filmStrip:
+            // The strip runs along the long side, so a portrait photo is framed sideways and turned back.
+            let stock = stockName(filmName)
+            let frame = info.frameNumber(of: 36)
+            guard h > w else { return filmStrip(photo, stock: stock, frame: frame) ?? photo }
+            guard let framed = filmStrip(origin(photo.oriented(.right)), stock: stock, frame: frame) else { return photo }
+            return origin(framed.oriented(.left))
+        case .mediumFormat:
+            return mediumFormat(photo, stock: stockName(filmName), frame: info.frameNumber(of: 12)) ?? photo
+        case .cinemaScope:
+            return cinemaScope(photo, lines: lines) ?? photo
         }
+    }
+
+    private static func origin(_ image: CIImage) -> CIImage {
+        image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+    }
+
+    /// The centred crop of `image` (origin at zero) with aspect `ratio` = width / height, moved to the origin.
+    private static func centerCrop(_ image: CIImage, ratio: CGFloat) -> CIImage {
+        let w = image.extent.width, h = image.extent.height
+        let cw = min(w, (h * ratio).rounded()), ch = min(h, (w / ratio).rounded())
+        let rect = CGRect(x: ((w - cw) / 2).rounded(), y: ((h - ch) / 2).rounded(), width: cw, height: ch)
+        return origin(image.cropped(to: rect))
+    }
+
+    private static func stockName(_ filmName: String?) -> String {
+        let name = filmName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (name.isEmpty ? "Phim Thô" : name).uppercased()
+    }
+
+    private static func solid(_ c: CGColor, _ rect: CGRect) -> CIImage {
+        CIImage(color: CIColor(cgColor: c)).cropped(to: rect)
+    }
+
+    // MARK: Film frames
+    //
+    // Styles chosen from ComfyUI-Darkroom's film rebates (MIT, github.com/jeremieLouvaert/ComfyUI-Darkroom) and
+    // film-borders (MIT, github.com/romnn/film-borders); drawn here from the published film dimensions.
+    // Shot On and CinemaScope follow exif-frame's themes (github.com/yurucam/exif-frame); no code from it is used.
+
+    private static let filmBase = color(0.075, 0.07, 0.065)
+    private static let perforation = color(0.93, 0.93, 0.91)
+    private static let edgeInk = color(1.0, 0.63, 0.22, 0.95)
+
+    private static func edgeFont(_ size: CGFloat) -> CTFont {
+        CTFontCreateWithName("Menlo-Bold" as CFString, size, nil)
+    }
+
+    /// A 35mm (135) negative: 36 × 24 image on 35 mm film, one 38 mm frame long, with KS-1870
+    /// perforations (2.794 × 1.98 mm, 4.75 mm pitch, 8 per frame) and amber edge printing.
+    /// The photo is cropped to 3:2. Laid out landscape; the caller turns it for portrait photos.
+    private static func filmStrip(_ photo: CIImage, stock: String, frame: Int) -> CIImage? {
+        let image = centerCrop(photo, ratio: 1.5)
+        let mm = image.extent.width / 36
+        let W = (38 * mm).rounded(), H = (35 * mm).rounded()
+        let band = (5.5 * mm).rounded()
+        let canvas = CGRect(x: 0, y: 0, width: W, height: H)
+        let textSize = 1.15 * mm
+
+        // Top band, bottom-up: 1.52 mm text strip next to the image, perforations, 2 mm to the edge.
+        guard let top = filmBand(width: W, height: band, mm: mm, perfY: 1.52 * mm, draw: { ctx in
+            draw(line(stock, font: edgeFont(textSize), color: edgeInk, kern: textSize * 0.12),
+                 in: ctx, x: 3 * mm, baseline: 0.34 * mm)
+        }) else { return nil }
+        // Bottom band: edge, perforations, then the frame numbers next to the image.
+        guard let bottom = filmBand(width: W, height: band, mm: mm, perfY: 2.0 * mm, draw: { ctx in
+            let font = edgeFont(textSize)
+            let baseline = band - 1.18 * mm
+            let next = frame % 36 + 1
+            draw(line("▸\(frame)", font: font, color: edgeInk), in: ctx, x: 2 * mm, baseline: baseline)
+            let middle = line("\(frame)A", font: font, color: edgeInk)
+            draw(middle, in: ctx, x: (W - width(middle)) / 2, baseline: baseline)
+            let right = line("▸\(next)", font: font, color: edgeInk)
+            draw(right, in: ctx, x: W - 2 * mm - width(right), baseline: baseline)
+        }) else { return nil }
+
+        return image.transformed(by: CGAffineTransform(translationX: ((W - image.extent.width) / 2).rounded(),
+                                                       y: ((H - image.extent.height) / 2).rounded()))
+            .composited(over: top.transformed(by: CGAffineTransform(translationX: 0, y: H - band)))
+            .composited(over: bottom)
+            .composited(over: solid(filmBase, canvas))
+            .cropped(to: canvas)
+    }
+
+    private static func filmBand(width: CGFloat, height: CGFloat, mm: CGFloat, perfY: CGFloat,
+                                 draw content: (CGContext) -> Void) -> CIImage? {
+        guard let ctx = context(width: width, height: height) else { return nil }
+        ctx.setFillColor(filmBase)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.setFillColor(perforation)
+        let pw = 2.794 * mm, ph = 1.98 * mm, pitch = width / 8
+        for i in 0..<8 {
+            let rect = CGRect(x: CGFloat(i) * pitch + (pitch - pw) / 2, y: perfY, width: pw, height: ph)
+            ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 0.5 * mm, cornerHeight: 0.5 * mm, transform: nil))
+        }
+        ctx.fillPath()
+        content(ctx)
+        return ctx.makeImage().map { CIImage(cgImage: $0) }
+    }
+
+    /// 120 roll film, 6×6: a 56 × 56 image on 61.5 mm film with edge printing and a frame
+    /// number (12 per roll). The photo is cropped square.
+    private static func mediumFormat(_ photo: CIImage, stock: String, frame: Int) -> CIImage? {
+        let image = centerCrop(photo, ratio: 1)
+        let mm = image.extent.width / 56
+        let W = (62 * mm).rounded(), H = (61.5 * mm).rounded()
+        let band = ((H - image.extent.height) / 2).rounded()
+        let canvas = CGRect(x: 0, y: 0, width: W, height: H)
+        let textSize = 1.35 * mm
+        let font = edgeFont(textSize)
+
+        guard let tctx = context(width: W, height: band), let bctx = context(width: W, height: band) else { return nil }
+        for ctx in [tctx, bctx] {
+            ctx.setFillColor(filmBase)
+            ctx.fill(CGRect(x: 0, y: 0, width: W, height: band))
+        }
+        let baseline = (band - textSize * 0.72) / 2
+        draw(line(stock, font: font, color: edgeInk, kern: textSize * 0.12), in: tctx, x: 4 * mm, baseline: baseline)
+        let number = line("\(frame)", font: font, color: edgeInk)
+        draw(number, in: tctx, x: W - 4 * mm - width(number), baseline: baseline)
+        draw(line("●  \(frame)", font: font, color: edgeInk), in: bctx, x: 4 * mm, baseline: baseline)
+        guard let top = tctx.makeImage(), let bottom = bctx.makeImage() else { return nil }
+
+        return image.transformed(by: CGAffineTransform(translationX: ((W - image.extent.width) / 2).rounded(), y: band))
+            .composited(over: CIImage(cgImage: top).transformed(by: CGAffineTransform(translationX: 0, y: H - band)))
+            .composited(over: CIImage(cgImage: bottom))
+            .composited(over: solid(filmBase, canvas))
+            .cropped(to: canvas)
+    }
+
+    // MARK: Shot On
+
+    /// A thin white frame; below it "Shot on <model>" and a small exposure · date line, centred.
+    private static func shotOn(_ photo: CIImage, lines: TextLines) -> CIImage? {
+        let w = photo.extent.width, h = photo.extent.height
+        let margin = (min(w, h) * 0.035).rounded()
+        let footer = (min(w, h) * 0.13).rounded()
+        let W = w + 2 * margin, H = h + margin + footer
+        guard let ctx = context(width: W, height: footer) else { return nil }
+        ctx.setFillColor(light.background)
+        ctx.fill(CGRect(x: 0, y: 0, width: W, height: footer))
+
+        let maxWidth = W * 0.86
+        var rows: [CTLine] = []
+        let titleSize = footer * 0.2
+        if let model = lines.title, lines.titleIsModel {
+            rows.append(shotOnLine(model: model, size: titleSize, maxWidth: maxWidth))
+        } else if let title = lines.title {
+            rows.append(fitted(title, size: titleSize, weight: 0.4, color: light.primary, maxWidth: maxWidth))
+        }
+        let detail = [lines.exposure, lines.date, lines.subtitle].compactMap { $0 }.joined(separator: "   ·   ")
+        if !detail.isEmpty {
+            rows.append(fitted(detail, size: footer * 0.115, weight: 0, color: light.secondary, maxWidth: maxWidth, mono: true))
+        }
+        let baselines: [CGFloat] = rows.count == 2 ? [footer * 0.55, footer * 0.3] : [footer * 0.44]
+        for (l, y) in zip(rows, baselines) { draw(l, in: ctx, x: (W - width(l)) / 2, baseline: y) }
+        guard let text = ctx.makeImage() else { return nil }
+
+        let canvas = CGRect(x: 0, y: 0, width: W, height: H)
+        return photo.transformed(by: CGAffineTransform(translationX: margin, y: footer))
+            .composited(over: CIImage(cgImage: text))
+            .composited(over: solid(light.background, canvas))
+            .cropped(to: canvas)
+    }
+
+    /// "Shot on " in regular weight, the model in semibold, shrunk together to fit.
+    private static func shotOnLine(model: String, size: CGFloat, maxWidth: CGFloat) -> CTLine {
+        func make(_ s: CGFloat) -> CTLine {
+            let text = NSMutableAttributedString()
+            for (part, weight) in [(String(localized: "Shot on "), CGFloat(0)), (model, CGFloat(0.4))] {
+                text.append(NSAttributedString(string: part, attributes: [
+                    NSAttributedString.Key(kCTFontAttributeName as String): font(s, weight: weight),
+                    NSAttributedString.Key(kCTForegroundColorAttributeName as String): light.primary,
+                ]))
+            }
+            return CTLineCreateWithAttributedString(text)
+        }
+        var s = size
+        var l = make(s)
+        while width(l) > maxWidth, s > size * 0.5 { s *= 0.94; l = make(s) }
+        return l
+    }
+
+    // MARK: CinemaScope
+
+    /// A 2.39:1 crop across the photo's width, letterboxed in a 16:9 frame, with small spaced
+    /// capitals in the bars: lens or signature and date on top, camera and exposure below.
+    private static func cinemaScope(_ photo: CIImage, lines: TextLines) -> CIImage? {
+        let w = photo.extent.width
+        let image = centerCrop(photo, ratio: 2.39)
+        let W = w, H = (w * 9 / 16).rounded()
+        let bar = ((H - image.extent.height) / 2).rounded()
+        // Capitals, but keep "ƒ/1.48" (uppercasing turns ƒ into Ƒ).
+        func caps(_ s: String?) -> String? { s?.uppercased().replacingOccurrences(of: "Ƒ", with: "ƒ") }
+        guard bar > 0, let topBar = scopeBar(width: W, height: bar, left: caps(lines.subtitle), right: lines.date),
+              let bottomBar = scopeBar(width: W, height: bar, left: caps(lines.title), right: lines.exposure)
+        else { return nil }
+        let canvas = CGRect(x: 0, y: 0, width: W, height: H)
+        let black = color(0, 0, 0)
+        return image.transformed(by: CGAffineTransform(translationX: ((W - image.extent.width) / 2).rounded(), y: bar))
+            .composited(over: topBar.transformed(by: CGAffineTransform(translationX: 0, y: H - bar)))
+            .composited(over: bottomBar)
+            .composited(over: solid(black, canvas))
+            .cropped(to: canvas)
+    }
+
+    private static func scopeBar(width w: CGFloat, height h: CGFloat, left: String?, right: String?) -> CIImage? {
+        guard let ctx = context(width: w, height: h) else { return nil }
+        ctx.setFillColor(color(0, 0, 0))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let size = h * 0.2, pad = w * 0.04
+        let ink = color(0.82, 0.82, 0.82)
+        let half = (w - 3 * pad) / 2
+        let baseline = (h - size * 0.72) / 2
+        if let left, !left.isEmpty {
+            draw(fitted(left, size: size, weight: 0.2, color: ink, maxWidth: half, kern: size * 0.18),
+                 in: ctx, x: pad, baseline: baseline)
+        }
+        if let right, !right.isEmpty {
+            let l = fitted(right, size: size, weight: 0.2, color: ink, maxWidth: half, mono: true, kern: size * 0.1)
+            draw(l, in: ctx, x: w - pad - width(l), baseline: baseline)
+        }
+        return ctx.makeImage().map { CIImage(cgImage: $0) }
     }
 
     // MARK: Date stamp
 
     /// The orange seven-segment date of 80s/90s compact film cameras, bottom-right, drawn as
-    /// geometry (no font dependency). `text` uses digits, spaces and an apostrophe.
+    /// geometry (no font dependency). `text` uses digits, spaces, an apostrophe and a colon.
     private static func drawDateStamp(_ text: String, width w: CGFloat, height h: CGFloat) -> CIImage? {
         let digitHeight = min(w, h) * 0.034
         let digitWidth = digitHeight * 0.55
@@ -212,11 +460,13 @@ enum Watermark {
         let gap = digitHeight * 0.18
         let spaceWidth = digitWidth * 0.7
         let tickWidth = digitWidth * 0.35
+        let colonWidth = digitWidth * 0.3
 
         func advance(_ c: Character) -> CGFloat {
             switch c {
             case " ": spaceWidth
             case "'": tickWidth + gap
+            case ":": colonWidth + gap
             default: digitWidth + gap
             }
         }
@@ -255,6 +505,10 @@ enum Watermark {
                 for s in segs { ctx.fill(segmentRect(s, x: x, y: y)) }
             } else if c == "'" {
                 ctx.fill(CGRect(x: x + tickWidth * 0.3, y: y + digitHeight * 0.68, width: stroke, height: digitHeight * 0.32))
+            } else if c == ":" {
+                let dotX = x + (colonWidth - stroke) / 2
+                ctx.fill(CGRect(x: dotX, y: y + digitHeight * 0.25 - stroke / 2, width: stroke, height: stroke))
+                ctx.fill(CGRect(x: dotX, y: y + digitHeight * 0.75 - stroke / 2, width: stroke, height: stroke))
             }
             x += advance(c)
         }
@@ -267,6 +521,7 @@ enum Watermark {
     /// The strings, chosen by the user's field toggles.
     private struct TextLines {
         var title: String?          // model (or signature when the model is hidden)
+        var titleIsModel = false
         var subtitle: String?       // lens or signature
         var exposure: String?
         var date: String?
@@ -274,6 +529,7 @@ enum Watermark {
         init(settings: WatermarkSettings, info: PhotoInfo) {
             let signature = settings.signature.trimmingCharacters(in: .whitespacesAndNewlines)
             title = settings.showModel ? info.modelText : nil
+            titleIsModel = title != nil
             var sub: [String] = []
             if settings.showLens, let lens = info.lensText { sub.append(lens) }
             if !signature.isEmpty { sub.append(signature) }
@@ -297,11 +553,13 @@ enum Watermark {
         return CTFontCreateWithFontDescriptor(descriptor, size, nil)
     }
 
-    private static func line(_ string: String, font: CTFont, color: CGColor) -> CTLine {
-        let attributed = NSAttributedString(string: string, attributes: [
+    private static func line(_ string: String, font: CTFont, color: CGColor, kern: CGFloat = 0) -> CTLine {
+        var attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
-        ])
+        ]
+        if kern != 0 { attributes[NSAttributedString.Key(kCTKernAttributeName as String)] = kern }
+        let attributed = NSAttributedString(string: string, attributes: attributes)
         return CTLineCreateWithAttributedString(attributed)
     }
 
@@ -309,12 +567,12 @@ enum Watermark {
 
     /// Shrinks the font until the string fits `maxWidth`.
     private static func fitted(_ string: String, size: CGFloat, weight: CGFloat, color: CGColor,
-                               maxWidth: CGFloat, mono: Bool = false) -> CTLine {
+                               maxWidth: CGFloat, mono: Bool = false, kern: CGFloat = 0) -> CTLine {
         var s = size
-        var l = line(string, font: font(s, weight: weight, monospacedDigits: mono), color: color)
+        var l = line(string, font: font(s, weight: weight, monospacedDigits: mono), color: color, kern: kern)
         while width(l) > maxWidth, s > size * 0.5 {
             s *= 0.94
-            l = line(string, font: font(s, weight: weight, monospacedDigits: mono), color: color)
+            l = line(string, font: font(s, weight: weight, monospacedDigits: mono), color: color, kern: kern * s / size)
         }
         return l
     }

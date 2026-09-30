@@ -1,6 +1,5 @@
 @preconcurrency import AVFoundation
 import ImageIO
-import Photos
 import UIKit
 
 /// Owns the AVCaptureSession. Every method runs on `sessionQueue`, which is the actor's
@@ -21,6 +20,8 @@ actor CaptureService {
 
     /// Draws the filtered viewfinder; fed by `videoOutput` only while a filter is in use.
     nonisolated let renderer = FilterRenderer()
+    /// Where captures are kept (the app's photos, or the Lock Screen session's content).
+    nonisolated let folder: PhotoFolder
 
     private let photoOutput = AVCapturePhotoOutput()
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -54,7 +55,8 @@ actor CaptureService {
     private var shutterStops: [Double] = []
     private var isoStops: [Float] = []
 
-    init() {
+    init(folder: PhotoFolder) {
+        self.folder = folder
         let (stream, continuation) = AsyncStream.makeStream(of: CameraEvent.self)
         events = stream
         sink = continuation
@@ -111,8 +113,6 @@ actor CaptureService {
             applyVideoConnectionGeometry()
         case .setLandscapeFraming(let landscape):
             setFraming(landscape: landscape)
-        case .finishCapture(let pending, let watermark):
-            Task { await finish(pending, watermark: watermark) }
         case .setPreferences(let newPrefs):
             let meterChanged = newPrefs.meterMode != prefs.meterMode
             let flashChanged = newPrefs.flash != prefs.flash
@@ -259,6 +259,12 @@ actor CaptureService {
             }
         }
         session.beginConfiguration()
+        // Choosing the front's open-gate format switches the session to .inputPriority, and it
+        // stays there: back on a rear lens, Bayer RAW is then not offered at all (verified on
+        // device: rawTypes [] until the .photo preset is restored).
+        if !front, session.sessionPreset != .photo, session.canSetSessionPreset(.photo) {
+            session.sessionPreset = .photo
+        }
         let wantProRAW = front && photoOutput.isAppleProRAWSupported
         if photoOutput.isAppleProRAWEnabled != wantProRAW { photoOutput.isAppleProRAWEnabled = wantProRAW }
         if let connection = photoOutput.connection(with: .video), connection.isVideoMirroringSupported {
@@ -902,12 +908,7 @@ actor CaptureService {
             result.info = info
             let pending = PendingCapture(dng: photo.dng, result: result, filter: filter, grain: grain,
                                          exposureCorrection: exposureCorrection)
-            if watermark.isActive, prefs.reviewWatermark, prefs.saveFilteredCopy {
-                // Nothing is saved yet: the review sheet settles the watermark, then calls finish.
-                sink.yield(.review(pending))
-            } else {
-                await finish(pending, watermark: watermark)
-            }
+            await finish(pending, watermark: watermark)
         }
     }
 
@@ -946,14 +947,17 @@ actor CaptureService {
         return outcome
     }
 
-    /// Develop (when a look or watermark is set), save to Photos, and report the result.
-    func finish(_ pending: PendingCapture, watermark: WatermarkSettings) async {
+    /// Develop (when a look or watermark is set), keep the photo in the app, and report the result.
+    /// Saving to the Photos library is a separate, explicit step in the photo view.
+    private func finish(_ pending: PendingCapture, watermark: WatermarkSettings) async {
         let filter = pending.filter, grain = pending.grain
         var result = pending.result
         var heic: Data?
         let corrected = abs(pending.exposureCorrection) > 0.3
         if filter != nil || grain.isActive || watermark.isActive || corrected, prefs.saveFilteredCopy {
             let dng = pending.dng
+            // The look's name is printed as the film stock on the film frames.
+            let filmName = filter.flatMap { LUTLibrary.shared.info($0.id)?.name }
             heic = await Task.detached(priority: .userInitiated) { () -> Data? in
                 var cube: CubeLUT?
                 if let filter {
@@ -961,11 +965,11 @@ actor CaptureService {
                     cube = loaded
                 }
                 return try? FilteredDeveloper.develop(dng: dng, cube: cube, intensity: filter?.intensity ?? 1,
-                                                      grain: grain, watermark: watermark,
+                                                      grain: grain, watermark: watermark, filmName: filmName,
                                                       exposure: pending.exposureCorrection)
             }.value
             if heic == nil {
-                sink.yield(.message(String(localized: "The filtered copy couldn't be made. The RAW was still saved.")))
+                sink.yield(.message(String(localized: "The filtered copy couldn't be made. The RAW was still kept.")))
             } else {
                 var parts: [String] = []
                 if let info = filter.flatMap({ LUTLibrary.shared.info($0.id) }) { parts.append("\(info.brand) · \(info.name)") }
@@ -985,21 +989,41 @@ actor CaptureService {
         } else {
             result.clean = result.processed
         }
-        switch await Self.saveToLibrary(dng: pending.dng, heic: heic) {
-        case .saved:
-            result.saved = true
-        case .savedSeparately(let pairError):
-            result.saved = true
-            sink.yield(.message(String(localized: "Saved RAW and HEIC as separate photos (pairing failed: \(pairError)).")))
-        case .notAuthorized:
-            sink.yield(.message(String(localized: "Couldn't save: allow Phim Thô to add photos in Settings › Privacy › Photos.")))
-        case .failed(let error):
-            sink.yield(.message(String(localized: "Couldn't save to Photos (\(error)).")))
+        var record = StoredPhoto()
+        record.date = result.date
+        record.hasProcessed = heic != nil
+        record.look = heic == nil ? nil : result.filterName
+        record.flashFired = result.flashFired
+        record.fNumber = result.fNumber
+        record.exposureTime = result.exposureTime
+        record.iso = result.iso
+        if let size = result.pixelSize, size.width > 0 {
+            record.width = Int(size.width)
+            record.height = Int(size.height)
         }
-        sink.yield(.captured(result))
+        record.rawBytes = pending.dng.count
+        record.processedBytes = heic?.count
+        record.info = result.info
+        let folder = folder, dng = pending.dng, developed = heic, rawPreview = result.thumbnail
+        let failure = await Task.detached(priority: .userInitiated) { [record] () -> String? in
+            let thumbnail = PhotoFolder.thumbnailJPEG(heic: developed, rawPreview: rawPreview)
+            do {
+                try folder.add(record, dng: dng, heic: developed, thumbnail: thumbnail)
+                return nil
+            } catch {
+                print("TrueShot: keeping the photo failed: \(error)")
+                return error.localizedDescription
+            }
+        }.value
+        if let failure {
+            sink.yield(.message(String(localized: "Couldn't keep the photo (\(failure)).")))
+            sink.yield(.captured(result, nil))
+        } else {
+            sink.yield(.captured(result, record))
+        }
     }
 
-    /// A display-sized, upright preview of the saved HEIC.
+    /// A display-sized, upright preview of the developed HEIC.
     private static func previewImage(from heic: Data) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(heic as CFData, nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
@@ -1008,77 +1032,6 @@ actor CaptureService {
                   kCGImageSourceThumbnailMaxPixelSize: 1600,
               ] as CFDictionary) else { return nil }
         return UIImage(cgImage: cg)
-    }
-
-    enum SaveOutcome: Sendable {
-        case saved, savedSeparately(String), notAuthorized, failed(String)
-    }
-
-    /// With a filtered copy, the HEIC is the asset's photo and the DNG its RAW alternate,
-    /// so Photos shows the look and keeps the untouched RAW alongside it. If Photos rejects
-    /// the pair, both files are still saved, as separate photos, and the reason is reported.
-    private static func saveToLibrary(dng: Data, heic: Data?) async -> SaveOutcome {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else { return .notAuthorized }
-        let stamp = Int(Date().timeIntervalSince1970)
-
-        guard let heic else {
-            do {
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetCreationRequest.forAsset()
-                        .addResource(with: .photo, data: dng, options: options("com.adobe.raw-image", "TrueShot_\(stamp).DNG"))
-                }
-                return .saved
-            } catch {
-                print("TrueShot: DNG save failed: \(describe(error)) — \(error)")
-                return .failed(describe(error))
-            }
-        }
-
-        // Paired the way Apple's RAW sample does it: processed photo as data with no options,
-        // the DNG as a file Photos moves in. (Passing the DNG as data with a UTI and filename
-        // fails with PHPhotosError 3300 "change not supported as configured" — verified on device.)
-        let rawURL = FileManager.default.temporaryDirectory.appending(path: "TrueShot_\(stamp).dng")
-        do {
-            try dng.write(to: rawURL)
-            try await PHPhotoLibrary.shared().performChanges {
-                let request = PHAssetCreationRequest.forAsset()
-                request.addResource(with: .photo, data: heic, options: nil)
-                let rawOptions = PHAssetResourceCreationOptions()
-                rawOptions.shouldMoveFile = true
-                request.addResource(with: .alternatePhoto, fileURL: rawURL, options: rawOptions)
-            }
-            return .saved
-        } catch {
-            try? FileManager.default.removeItem(at: rawURL)
-            let reason = describe(error)
-            print("TrueShot: HEIC+DNG pair failed: \(reason) — \(error)")
-            do {
-                try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetCreationRequest.forAsset()
-                        .addResource(with: .photo, data: dng, options: options("com.adobe.raw-image", "TrueShot_\(stamp).DNG"))
-                    PHAssetCreationRequest.forAsset()
-                        .addResource(with: .photo, data: heic, options: options("public.heic", "TrueShot_\(stamp).HEIC"))
-                }
-                return .savedSeparately(reason)
-            } catch {
-                print("TrueShot: separate save failed too: \(describe(error)) — \(error)")
-                return .failed(describe(error))
-            }
-        }
-    }
-
-    private static func options(_ uti: String, _ filename: String) -> PHAssetResourceCreationOptions {
-        let o = PHAssetResourceCreationOptions()
-        o.uniformTypeIdentifier = uti
-        o.originalFilename = filename
-        return o
-    }
-
-    private static func describe(_ error: any Error) -> String {
-        let e = error as NSError
-        let domain = e.domain == PHPhotosErrorDomain ? "Photos" : e.domain
-        return "\(domain) \(e.code)"
     }
 }
 

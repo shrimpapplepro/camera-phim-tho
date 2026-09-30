@@ -115,7 +115,7 @@ struct SettingsView: View {
         } header: {
             Text("Filters")
         } footer: {
-            Text("With a filter, grain or watermark on, Phim Thô develops the RAW (no noise reduction or sharpening), applies them and saves a HEIC, with the untouched DNG attached as its RAW original. Turn this off to use looks only in the viewfinder (watermarks need it on).")
+            Text("With a filter, grain or watermark on, Phim Thô develops the RAW (no noise reduction or sharpening), applies them and keeps a HEIC next to the untouched DNG. Saving a photo to your library attaches the DNG as the HEIC's RAW original. Turn this off to use looks only in the viewfinder (watermarks need it on).")
         }
     }
 

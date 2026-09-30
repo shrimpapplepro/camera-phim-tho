@@ -20,16 +20,6 @@ struct WatermarkSettingsView: View {
             }
 
             WatermarkFields(settings: $model.preferences.watermark)
-
-            if settings.isActive {
-                Section {
-                    Toggle("Review Before Saving", isOn: $model.preferences.reviewWatermark)
-                } footer: {
-                    Text(model.preferences.reviewWatermark
-                         ? "After each shot, adjust the watermark on the actual photo, then save. Nothing is saved until you tap Save."
-                         : "Photos save immediately with these settings.")
-                }
-            }
         }
         .navigationTitle("Watermark")
         .navigationBarTitleDisplayMode(.inline)
@@ -37,12 +27,13 @@ struct WatermarkSettingsView: View {
             let capture = model.lastCapture
             // Never the processed image: it already carries the watermark it was saved with.
             let base = (capture?.clean ?? capture?.thumbnail).flatMap(WatermarkPreview.upright)
-            preview = await WatermarkPreview.render(settings, info: capture?.info ?? .sample, base: base)
+            preview = await WatermarkPreview.render(settings, info: capture?.info ?? .sample,
+                                                    filmName: model.filterInfo?.name, base: base)
         }
     }
 }
 
-/// Style, fields and signature. Shared by Settings and the post-capture review sheet.
+/// Style, fields and signature. Every photo is stamped with these as it's taken.
 struct WatermarkFields: View {
     @Binding var settings: WatermarkSettings
 
@@ -56,8 +47,16 @@ struct WatermarkFields: View {
         }
         if settings.style == .dateStamp {
             Section {
+                Toggle("Time", isOn: $settings.stampTime)
             } footer: {
-                Text("The orange date of compact film cameras, from the photo's capture time. Only the HEIC is stamped.")
+                Text("The orange date of compact film cameras, from the photo's capture time, with hours and minutes when Time is on. Only the HEIC is stamped.")
+            }
+        } else if settings.style.isFilm {
+            Section {
+            } footer: {
+                Text(settings.style == .filmStrip
+                     ? "A 35mm negative: sprocket holes, your look's name printed on the edge as the film stock, and frame numbers. The photo is cropped to 3:2. Only the HEIC is framed."
+                     : "A frame of 120 roll film: your look's name printed on the edge as the film stock, and a frame number. The photo is cropped square. Only the HEIC is framed.")
             }
         } else if settings.isActive {
             Section {
@@ -70,7 +69,9 @@ struct WatermarkFields: View {
             } header: {
                 Text("Show")
             } footer: {
-                Text("Only the HEIC is watermarked. The DNG is saved untouched.")
+                Text(settings.style == .cinemaScope
+                     ? "The photo is cropped to 2.39:1 and letterboxed in 16:9. Only the HEIC is watermarked. The DNG is saved untouched."
+                     : "Only the HEIC is watermarked. The DNG is saved untouched.")
             }
         }
     }
@@ -94,11 +95,12 @@ struct WatermarkPreview: View {
     }
 
     /// Renders `settings` over `base` (upright) off the main thread.
-    static func render(_ settings: WatermarkSettings, info: PhotoInfo, base: CIImage?) async -> UIImage? {
+    static func render(_ settings: WatermarkSettings, info: PhotoInfo, filmName: String? = nil,
+                       base: CIImage?) async -> UIImage? {
         await Task.detached(priority: .userInitiated) { () -> UIImage? in
             let source = base ?? CIImage(color: CIColor(red: 0.42, green: 0.45, blue: 0.5))
                 .cropped(to: CGRect(x: 0, y: 0, width: 900, height: 1200))
-            let framed = Watermark.apply(settings, info: info, to: source)
+            let framed = Watermark.apply(settings, info: info, filmName: filmName, to: source)
             guard let cg = context.createCGImage(framed, from: framed.extent) else { return nil }
             return UIImage(cgImage: cg)
         }.value

@@ -15,7 +15,14 @@ struct TrueShotCaptureExtension: LockedCameraCaptureExtension {
 
 private struct LockedCameraRoot: View {
     let session: LockedCameraCaptureSession
-    @State private var model = CameraModel()
+    @State private var model: CameraModel
+
+    init(session: LockedCameraCaptureSession) {
+        self.session = session
+        // Photos taken here go to the session's content directory; the app imports them
+        // into its own photos the next time it runs.
+        _model = State(initialValue: CameraModel(photoFolder: PhotoFolder(root: session.sessionContentURL)))
+    }
 
     var body: some View {
         CameraView(model: model, openApp: openApp)

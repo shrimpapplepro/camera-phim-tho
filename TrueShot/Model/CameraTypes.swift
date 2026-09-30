@@ -95,7 +95,6 @@ struct CaptureResult: Sendable {
     var iso: Double?
     var pixelSize: CGSize?
     var byteCount = 0
-    var saved = false
     var filterName: String?
     var info: PhotoInfo?
     /// Whether the flash fired for this frame (from the resolved capture settings).
@@ -103,9 +102,8 @@ struct CaptureResult: Sendable {
     var date = Date()
 }
 
-/// A captured DNG held for watermark review; nothing is saved until the user confirms.
-struct PendingCapture: Identifiable, Sendable {
-    let id = UUID()
+/// A captured DNG on its way to being developed and kept in the app.
+struct PendingCapture: Sendable {
     let dng: Data
     let result: CaptureResult
     let filter: FilterSelection?
@@ -119,8 +117,8 @@ enum CameraEvent: Sendable {
     case controls(ControlState)
     case readout(LiveReadout)
     case willCapture
-    case captured(CaptureResult)
-    case review(PendingCapture)
+    /// The capture, and its stored photo (nil if it couldn't be kept).
+    case captured(CaptureResult, StoredPhoto?)
     case message(String)
     case unauthorized
     case failed(String)
@@ -136,7 +134,6 @@ enum CameraIntent: Sendable {
     case setFilterFrames(Bool)
     case setPreviewRotation(CGFloat)
     case setLandscapeFraming(Bool)
-    case finishCapture(PendingCapture, watermark: WatermarkSettings)
     case setPreferences(Preferences)
     case setActive(Bool)
 }
