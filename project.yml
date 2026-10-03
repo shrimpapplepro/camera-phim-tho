@@ -12,7 +12,7 @@ settings:
     # Version for the app AND both extensions (Apple requires them to match). Bump here only —
     # edits made in Xcode are overwritten by `xcodegen generate`.
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "10"
+    CURRENT_PROJECT_VERSION: "11"
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
 targets:
