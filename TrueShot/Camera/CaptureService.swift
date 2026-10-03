@@ -111,9 +111,12 @@ actor CaptureService {
         case .setPreviewRotation(let angle):
             previewAngle = angle
             applyVideoConnectionGeometry()
-        case .setLandscapeFraming(let landscape):
-            setFraming(landscape: landscape)
+        case .setFraming(let landscape, let close):
+            setFraming(landscape: landscape, close: close)
+        case .setFramingZoom(let close):
+            setFramingZoom(close: close)
         case .setPreferences(let newPrefs):
+            let oldAutoFraming = prefs.autoFraming
             let meterChanged = newPrefs.meterMode != prefs.meterMode
             let flashChanged = newPrefs.flash != prefs.flash
             let rebuildControls = newPrefs.cameraControlItems != prefs.cameraControlItems
@@ -126,6 +129,7 @@ actor CaptureService {
             if rebuildControls { rebuildSystemControls() }
             if meterChanged { installMeter(); resetMeter() }
             if flashChanged, let device { applyFlashRecipe(to: device) }
+            if newPrefs.autoFraming != oldAutoFraming { updateSmartFraming() }
         case .setActive(let active):
             isActive = active
             guard isConfigured else { return }
@@ -239,6 +243,7 @@ actor CaptureService {
         configureForPosition(camera)
         photoOutput.maxPhotoQualityPrioritization = .speed
         deviceDidChange()
+        updateSmartFraming()
     }
 
     /// Front vs rear specifics, applied after the input changes:
@@ -255,6 +260,9 @@ actor CaptureService {
                 ?? open.first
             if let best, (try? camera.lockForConfiguration()) != nil {
                 camera.activeFormat = best
+                // Like the Camera app: portrait starts on the close framing, landscape on the wide.
+                let zooms = Self.framingZooms(camera)
+                camera.videoZoomFactor = camera.dynamicAspectRatio == .ratio3x4 ? zooms.wide : zooms.close
                 camera.unlockForConfiguration()
             }
         }
@@ -290,17 +298,71 @@ actor CaptureService {
 
     /// Open-gate framing: portrait ⇄ landscape on the same square sensor (no phone rotation).
     /// On this sensor the 4:3 dynamic ratio yields a portrait photo and 3:4 a landscape one
-    /// (verified: ProRAW 3024×4032 vs 4032×3024).
-    private func setFraming(landscape: Bool) {
+    /// (verified: ProRAW 3024×4032 vs 4032×3024). The zoom jumps with the crop: the viewfinder
+    /// is held over the change (CameraModel.framingHold).
+    private func setFraming(landscape: Bool, close: Bool) {
         guard let device else { return }
         let ratio: AVCaptureDevice.AspectRatio = landscape ? .ratio3x4 : .ratio4x3
         guard device.activeFormat.supportedDynamicAspectRatios.contains(ratio),
               (try? device.lockForConfiguration()) != nil else { return }
+        let zooms = Self.framingZooms(device)
+        device.videoZoomFactor = close ? zooms.close : zooms.wide
+        caps.isCloseFraming = close
         device.setDynamicAspectRatio(ratio) { [sink] _, _ in
             let dims = device.dynamicDimensions
             if dims.width > 0 { sink.yield(.framing(CGFloat(dims.height) / CGFloat(dims.width))) }
         }
         device.unlockForConfiguration()
+    }
+
+    private var framingObservation: NSKeyValueObservation?
+
+    /// Auto framing: the smart-framing monitor (the Camera app's selfie Center Stage) watches the
+    /// scene and recommends a crop + zoom; CameraModel applies it, with the crossfade.
+    /// Runs only on the active open-gate lens while the preference is on.
+    private func updateSmartFraming() {
+        framingObservation = nil
+        for camera in devicesByID.values where camera !== device || !prefs.autoFraming {
+            if camera.smartFramingMonitor?.isMonitoring == true { camera.smartFramingMonitor?.stopMonitoring() }
+        }
+        guard prefs.autoFraming, let device, device.activeFormat.isSmartFramingSupported,
+              let monitor = device.smartFramingMonitor else { return }
+        // Under the configuration lock, as in Apple's sample (WWDC26 "Support the Center Stage
+        // front camera"); the monitor recommends nothing until framings are enabled.
+        guard (try? device.lockForConfiguration()) != nil else { return }
+        monitor.enabledFramings = monitor.supportedFramings
+        device.unlockForConfiguration()
+        do {
+            try monitor.startMonitoring()
+        } catch {
+            print("TrueShot: smart framing didn't start: \(error)")
+            return
+        }
+        let zooms = Self.framingZooms(device)
+        let midpoint = (zooms.wide + zooms.close) / 2
+        let sink = sink
+        framingObservation = monitor.observe(\.recommendedFraming, options: [.initial, .new]) { monitor, _ in
+            guard let framing = monitor.recommendedFraming else { return }
+            sink.yield(.recommendedFraming(landscape: framing.aspectRatio == .ratio3x4,
+                                           close: CGFloat(framing.zoomFactor) > midpoint))
+        }
+    }
+
+    /// Close ⇄ wide on the open-gate sensor, ramped like a zoom.
+    private func setFramingZoom(close: Bool) {
+        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        let zooms = Self.framingZooms(device)
+        device.ramp(toVideoZoomFactor: close ? zooms.close : zooms.wide, withRate: 4)
+        device.unlockForConfiguration()
+        caps.isCloseFraming = close
+    }
+
+    /// The smart-framing monitor's zoom factors (any aspect ratio), clamped to the device.
+    private static func framingZooms(_ device: AVCaptureDevice) -> (wide: CGFloat, close: CGFloat) {
+        let factors = device.smartFramingMonitor?.supportedFramings.map(\.zoomFactor) ?? []
+        let lo = device.minAvailableVideoZoomFactor, hi = device.maxAvailableVideoZoomFactor
+        let clamp = { (z: CGFloat) in min(max(z, lo), hi) }
+        return (clamp(factors.min().map(CGFloat.init) ?? 1), clamp(factors.max().map(CGFloat.init) ?? 1))
     }
 
     /// Recompute capabilities for the active lens, clamp the user's controls to them,
@@ -358,6 +420,11 @@ actor CaptureService {
         c.isFront = device.position == .front
         let ratios = device.activeFormat.supportedDynamicAspectRatios
         c.canSwapFraming = ratios.contains(.ratio4x3) && ratios.contains(.ratio3x4)
+        c.hasDynamicAspect = !ratios.isEmpty
+        if c.hasDynamicAspect {
+            (c.wideZoom, c.closeZoom) = Self.framingZooms(device)
+            c.isCloseFraming = c.canZoomFraming && device.videoZoomFactor > (c.wideZoom + c.closeZoom) / 2
+        }
         let dims = device.dynamicDimensions
         // Sensor-oriented dimensions are shown rotated a quarter turn in the portrait UI.
         c.frameAspect = dims.width > 0 && dims.height > 0 ? CGFloat(dims.height) / CGFloat(dims.width) : 3.0 / 4.0

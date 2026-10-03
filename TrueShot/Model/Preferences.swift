@@ -133,6 +133,10 @@ struct Preferences: Codable, Equatable, Sendable {
     var grain = GrainSettings()
     var watermark = WatermarkSettings()
 
+    /// Front camera: follow the smart-framing monitor (Center Stage for photos) — crop and zoom
+    /// change on their own as people enter or leave. Turned off by a manual crop or zoom tap.
+    var autoFraming = true
+
     // Camera Control button
     var cameraControlItems: [CameraControlItem] = [.exposureBias, .aperture, .shutter, .iso]
 
@@ -164,6 +168,7 @@ struct Preferences: Codable, Equatable, Sendable {
         grain = (try? c.decode(GrainSettings.self, forKey: .grain)) ?? d.grain
         favoriteLooks = (try? c.decode([String].self, forKey: .favoriteLooks)) ?? d.favoriteLooks
         watermark = (try? c.decode(WatermarkSettings.self, forKey: .watermark)) ?? d.watermark
+        autoFraming = (try? c.decode(Bool.self, forKey: .autoFraming)) ?? d.autoFraming
     }
 
     private static let key = "TrueShot.preferences.v1"

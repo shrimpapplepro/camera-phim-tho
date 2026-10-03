@@ -41,6 +41,14 @@ struct CameraCapabilities: Equatable, Sendable {
     var frameAspect: CGFloat = 3.0 / 4.0
     /// True when the lens can swap portrait ⇄ landscape on the same sensor (open gate).
     var canSwapFraming = false
+    /// True when the format crops to a dynamic aspect ratio, so frameAspect is the real frame shape.
+    var hasDynamicAspect = false
+    /// Open-gate zoom pair from the smart-framing monitor: wide = the whole sensor, close = the
+    /// tighter selfie framing (1.0 and 1.59 on the iPhone 18 front camera). Equal when unsupported.
+    var wideZoom: CGFloat = 1
+    var closeZoom: CGFloat = 1
+    var isCloseFraming = false
+    var canZoomFraming: Bool { closeZoom > wideZoom }
     var hasFlash = false
     /// Manual-axis combinations the format accepts (`supportsExposureModeCustom`).
     var supportedCombos: Set<UInt8> = [0]
@@ -124,6 +132,8 @@ enum CameraEvent: Sendable {
     case failed(String)
     case systemControlsFullscreen(Bool)
     case framing(CGFloat)
+    /// The smart-framing monitor's latest recommendation.
+    case recommendedFraming(landscape: Bool, close: Bool)
 }
 
 enum CameraIntent: Sendable {
@@ -133,7 +143,8 @@ enum CameraIntent: Sendable {
     case capture(rotationAngle: CGFloat, filter: FilterSelection?, grain: GrainSettings, watermark: WatermarkSettings)
     case setFilterFrames(Bool)
     case setPreviewRotation(CGFloat)
-    case setLandscapeFraming(Bool)
+    case setFraming(landscape: Bool, close: Bool)
+    case setFramingZoom(close: Bool)
     case setPreferences(Preferences)
     case setActive(Bool)
 }

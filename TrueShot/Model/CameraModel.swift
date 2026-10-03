@@ -27,6 +27,9 @@ final class CameraModel {
     var message: String?
     var systemControlsFullscreen = false
     var focusReticle: CGPoint?
+    /// The last viewfinder frame, held over the preview while the open-gate crop swaps so the
+    /// frame reshapes and crossfades instead of jumping (see PreviewUIView.setHold).
+    var framingHold: CGImage?
     /// How the phone is physically held, from gravity. The interface is portrait-only and iOS
     /// reports portrait while rotation lock is on, so neither can tell a landscape shot.
     private(set) var deviceOrientation: AVCaptureVideoOrientation = .portrait
@@ -68,6 +71,8 @@ final class CameraModel {
     @ObservationIgnored private var rotationObservation: NSKeyValueObservation?
     @ObservationIgnored private var messageTask: Task<Void, Never>?
     @ObservationIgnored private var reticleTask: Task<Void, Never>?
+    @ObservationIgnored private var holdTask: Task<Void, Never>?
+    @ObservationIgnored private var recommendationTask: Task<Void, Never>?
     @ObservationIgnored private var started = false
     @ObservationIgnored private var contextTask: Task<Void, Never>?
     @ObservationIgnored private let motion = CMMotionManager()
@@ -113,7 +118,9 @@ final class CameraModel {
             let firstConfiguration = status != .running
             status = .running
             rebuildRotationCoordinator()
-            if firstConfiguration { applyFilter() }
+            holdTask?.cancel()
+            framingHold = nil
+            if firstConfiguration { applyFilter() } else { updateFilterFrames() }
         case .controls(let controls):
             self.controls = controls
             persistControls()
@@ -130,8 +137,20 @@ final class CameraModel {
             status = .unauthorized
         case .failed(let reason):
             status = .failed(reason)
+        case .recommendedFraming(let landscape, let close):
+            guard preferences.autoFraming, isFrontActive else { return }
+            // Act on a recommendation only once it has held for a moment, so a face briefly
+            // turning away doesn't swing the frame back and forth.
+            recommendationTask?.cancel()
+            recommendationTask = Task {
+                try? await Task.sleep(for: .seconds(0.6))
+                guard !Task.isCancelled, preferences.autoFraming, isFrontActive else { return }
+                applyFraming(landscape: landscape, close: close)
+            }
         case .framing(let aspect):
             withAnimation(.smooth(duration: 0.35)) { capabilities.frameAspect = aspect }
+            // The new crop is live; uncover it once the frame has finished reshaping.
+            if framingHold != nil { releaseFramingHold(after: .seconds(0.35)) }
         case .systemControlsFullscreen(let fullscreen):
             withAnimation(.smooth) { systemControlsFullscreen = fullscreen }
         }
@@ -223,9 +242,61 @@ final class CameraModel {
     var isLandscapeFraming: Bool { capabilities.frameAspect > 1 }
 
     /// Open-gate front camera: swap portrait ⇄ landscape without rotating the phone.
+    /// The crop and its default zoom change together, like the Camera app's selfie rotation.
+    /// A manual swap ends auto framing.
     func toggleFraming() {
         guard capabilities.canSwapFraming else { return }
-        intents.yield(.setLandscapeFraming(!isLandscapeFraming))
+        preferences.autoFraming = false
+        let landscape = !isLandscapeFraming
+        applyFraming(landscape: landscape, close: !landscape)
+    }
+
+    /// Open-gate front camera: the close selfie framing ⇄ the whole sensor. Ends auto framing.
+    func toggleFramingZoom() {
+        guard capabilities.canZoomFraming else { return }
+        preferences.autoFraming = false
+        applyFraming(landscape: isLandscapeFraming, close: !capabilities.isCloseFraming)
+    }
+
+    func toggleAutoFraming() {
+        preferences.autoFraming.toggle()
+    }
+
+    /// A crop change is held under the last frame and crossfaded; a zoom-only change ramps.
+    private func applyFraming(landscape: Bool, close: Bool) {
+        let close = close && capabilities.canZoomFraming
+        if landscape != isLandscapeFraming, capabilities.canSwapFraming {
+            guard framingHold == nil else { return }   // a swap is already under way
+            if drawsViewfinder, let still = service.renderer.lastFrameImage() {
+                framingHold = still
+                // Released by the .framing event; this is only the fallback if it never arrives.
+                releaseFramingHold(after: .seconds(1.5))
+            }
+            capabilities.isCloseFraming = close
+            intents.yield(.setFraming(landscape: landscape, close: close))
+        } else if close != capabilities.isCloseFraming {
+            capabilities.isCloseFraming = close
+            intents.yield(.setFramingZoom(close: close))
+        }
+    }
+
+    /// The zoom button's label: close is 1×, wide relative to it (0.6×).
+    var framingZoomLabel: String {
+        let c = capabilities
+        guard c.isCloseFraming else {
+            let r = ((c.wideZoom / c.closeZoom) * 10).rounded() / 10
+            return r == r.rounded() ? "\(Int(r))×" : String(format: "%.1f×", r)
+        }
+        return "1×"
+    }
+
+    private func releaseFramingHold(after delay: Duration) {
+        holdTask?.cancel()
+        holdTask = Task {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            framingHold = nil
+        }
     }
 
     /// Front ⇄ rear. Going back returns to the rear lens you were last on.
@@ -372,6 +443,11 @@ final class CameraModel {
     /// A look is active when a LUT or grain is on. With no look, the viewfinder is the
     /// untouched system preview and only the DNG is saved.
     var lookActive: Bool { preferences.filter != nil || preferences.grain.isActive }
+    /// The viewfinder is drawn by FilterRenderer: for a look, and always on open-gate formats —
+    /// AVCaptureVideoPreviewLayer sizes those as the square 4032² format rather than the 3:4/4:3
+    /// crop actually delivered, stretching the front camera 4/3 whatever the gravity (verified on
+    /// device: unit rect 587×587 in a 440×587 layer with buffers 3024×4032, .resize included).
+    var drawsViewfinder: Bool { lookActive || capabilities.hasDynamicAspect }
 
     func setGrain(_ mutate: (inout GrainSettings) -> Void) {
         let wasActive = preferences.grain.isActive
@@ -429,9 +505,10 @@ final class CameraModel {
         }
     }
 
-    /// Frames flow to the renderer only while a filter is active or the browser needs a snapshot.
+    /// Frames flow to the renderer only while it draws the viewfinder, meters, or the browser needs a snapshot.
     private func updateFilterFrames() {
-        intents.yield(.setFilterFrames(lookActive || showFilters || preferences.meterMode != .system))
+        service.renderer.setPassthrough(capabilities.hasDynamicAspect)
+        intents.yield(.setFilterFrames(drawsViewfinder || showFilters || preferences.meterMode != .system))
     }
 
     /// A small preview of the current scene through a LUT, rendered off the main thread.

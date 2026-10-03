@@ -379,6 +379,39 @@ struct LensPicker: View {
                     .accessibilityLabel(lens.name)
                     .accessibilityAddTraits(active ? .isSelected : [])
                 }
+                if model.isFrontActive, model.capabilities.canZoomFraming {
+                    let auto = model.preferences.autoFraming
+                    Button {
+                        model.toggleAutoFraming()
+                    } label: {
+                        Image(systemName: "person.crop.rectangle")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(auto ? Color.yellow : Color.primary)
+                            .frame(width: 44, height: 44)
+                            .rotationEffect(.degrees(model.iconRotation))
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(auto ? .regular.interactive() : .clear.interactive(), in: .circle)
+                    .accessibilityLabel("Auto framing")
+                    .accessibilityValue(auto ? "On" : "Off")
+                    .accessibilityHint("Lets the camera choose the crop and zoom for the people in frame.")
+                }
+                if model.isFrontActive, model.capabilities.canZoomFraming {
+                    Button {
+                        model.toggleFramingZoom()
+                    } label: {
+                        Text(model.framingZoomLabel)
+                            .font(.footnote.weight(.semibold).monospacedDigit())
+                            .frame(width: 44, height: 44)
+                            .contentTransition(.numericText())
+                            .rotationEffect(.degrees(model.iconRotation))
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .animation(.smooth, value: model.framingZoomLabel)
+                    .accessibilityLabel(model.capabilities.isCloseFraming ? "Close framing" : "Wide framing")
+                    .accessibilityHint("Switches between the close selfie framing and the whole sensor.")
+                }
                 if model.isFrontActive, model.capabilities.canSwapFraming {
                     Button {
                         model.toggleFraming()
