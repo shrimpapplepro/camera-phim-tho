@@ -14,7 +14,9 @@ perl -0pi -e 's/dstPath = "\$\(EXTENSIONS_FOLDER_PATH\)";\s*dstSubfolderSpec = 1
 
 # Optional: put your Apple Developer Team ID in a local, git-ignored `.team` file so a
 # regenerated project keeps signing (Xcode › Signing & Capabilities otherwise resets to None).
+# Set once at project level (anchored on MARKETING_VERSION, a project-only setting); every target
+# inherits it, as Xcode's recommended settings ask.
 if [ -f .team ]; then
     TEAM=$(tr -d '[:space:]' < .team)
-    perl -pi -e "s/(PRODUCT_BUNDLE_IDENTIFIER = [^;]+;)/\$1\n\t\t\t\tDEVELOPMENT_TEAM = $TEAM;/" "$PBX"
+    perl -pi -e "s/(MARKETING_VERSION = [^;]+;)/\$1\n\t\t\t\tDEVELOPMENT_TEAM = $TEAM;/" "$PBX"
 fi

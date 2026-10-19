@@ -3,6 +3,8 @@ options:
   deploymentTarget:
     iOS: "27.0"
   createIntermediateGroups: true
+  # LastUpgradeCheck: Xcode stops offering "Update to recommended settings" once these are in.
+  xcodeVersion: "27.2"
   # Icon Composer file type fix + optional signing team from a local .team file (see the script).
   postGenCommand: scripts/postgen.sh
 settings:
@@ -15,6 +17,9 @@ settings:
     CURRENT_PROJECT_VERSION: "12"
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
+    # Xcode 27 recommended settings.
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    STRING_CATALOG_GENERATE_SYMBOLS: YES
 targets:
   TrueShot:
     type: application
