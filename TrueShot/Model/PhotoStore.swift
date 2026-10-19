@@ -144,6 +144,17 @@ final class PhotoStore {
 
     func photo(_ id: UUID) -> StoredPhoto? { photos.first { $0.id == id } }
 
+    private static let revealedKey = "TrueShot.revealedPhoto.v1"
+
+    /// The newest photo the first time it's asked for, then nil until a newer one is taken:
+    /// opening Photos shows a new capture once, and the grid after that.
+    func revealNewest() -> UUID? {
+        guard let newest = photos.first?.id,
+              UserDefaults.standard.string(forKey: Self.revealedKey) != newest.uuidString else { return nil }
+        UserDefaults.standard.set(newest.uuidString, forKey: Self.revealedKey)
+        return newest
+    }
+
     func insert(_ photo: StoredPhoto) {
         photos.removeAll { $0.id == photo.id }
         let index = photos.firstIndex { $0.date < photo.date } ?? photos.endIndex
@@ -222,6 +233,20 @@ final class PhotoStore {
 enum PhotoLibrarySaver {
     enum Outcome: Sendable {
         case saved, savedSeparately(String), notAuthorized, failed(String)
+    }
+
+    /// What to tell the user about an outcome; nil when it simply worked.
+    static func message(for outcome: Outcome) -> String? {
+        switch outcome {
+        case .saved:
+            nil
+        case .savedSeparately(let reason):
+            String(localized: "Saved the RAW and the HEIC as separate photos (pairing failed: \(reason)).")
+        case .notAuthorized:
+            String(localized: "Couldn't save: allow Phim Thô to add photos in Settings › Privacy › Photos.")
+        case .failed(let reason):
+            String(localized: "Couldn't save to Photos (\(reason)).")
+        }
     }
 
     /// With a HEIC, it is the asset's photo and the DNG its RAW alternate, so Photos shows the
