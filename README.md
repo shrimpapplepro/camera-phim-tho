@@ -69,6 +69,8 @@ Built with SwiftUI and **Liquid Glass**, following Apple's Human Interface Guide
   your library by itself.
 - Tap the thumbnail to see your photos: switch between the processed HEIC and the RAW, read the metadata,
   **Save to Photos** (HEIC with the DNG attached as its RAW original) or **Delete**.
+- With Full Access to your library, saved photos also go into a **Phim Thô** album (created on the first save,
+  and still found if you rename it). With limited or add-only access they're saved without the album.
 
 **Front camera**
 - The Center Stage front camera's square "open gate" sensor: swap **portrait ⇄ landscape without rotating the phone**

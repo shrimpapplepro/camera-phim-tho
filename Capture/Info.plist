@@ -27,5 +27,7 @@
 	<string>Phim Thô uses the camera to capture unprocessed RAW photos.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Phim Thô saves your RAW (DNG) photos to your library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Phim Thô saves your RAW (DNG) photos to your library and keeps them together in a Phim Thô album.</string>
 </dict>
 </plist>

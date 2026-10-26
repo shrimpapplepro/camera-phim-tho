@@ -174,7 +174,8 @@ final class PhotoStore {
         thumbnails[photo.id] = nil
     }
 
-    /// Saves to the Photos library (HEIC with the DNG as its RAW original, or the DNG alone).
+    /// Saves to the Photos library (HEIC with the DNG as its RAW original, or the DNG alone),
+    /// into the Phim Thô album when the app has full access.
     func saveToLibrary(_ photo: StoredPhoto) async -> PhotoLibrarySaver.Outcome {
         let folder = folder
         let outcome = await PhotoLibrarySaver.save(
@@ -229,7 +230,7 @@ final class PhotoStore {
     }
 }
 
-/// Writes a stored photo into the Photos library.
+/// Writes a stored photo into the Photos library, filed in the Phim Thô album when allowed.
 enum PhotoLibrarySaver {
     enum Outcome: Sendable {
         case saved, savedSeparately(String), notAuthorized, failed(String)
@@ -252,9 +253,9 @@ enum PhotoLibrarySaver {
     /// With a HEIC, it is the asset's photo and the DNG its RAW alternate, so Photos shows the
     /// look and keeps the untouched RAW alongside it. If Photos rejects the pair, both files are
     /// still saved, as separate photos, and the reason is reported.
+    /// With full library access the new photos also go into the Phim Thô album.
     static func save(dng dngURL: URL, heic heicURL: URL?, date: Date) async -> Outcome {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else { return .notAuthorized }
+        guard let album = await authorize() else { return .notAuthorized }
         let stamp = Int(date.timeIntervalSince1970)
 
         let dng: Data
@@ -269,9 +270,11 @@ enum PhotoLibrarySaver {
         guard let heic else {
             do {
                 try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetCreationRequest.forAsset()
-                        .addResource(with: .photo, data: dng, options: options("com.adobe.raw-image", "TrueShot_\(stamp).DNG"))
+                    let request = PHAssetCreationRequest.forAsset()
+                    request.addResource(with: .photo, data: dng, options: options("com.adobe.raw-image", "TrueShot_\(stamp).DNG"))
+                    file([request], in: album)
                 }
+                rememberAlbum(album)
                 return .saved
             } catch {
                 print("TrueShot: DNG save failed: \(describe(error)) — \(error)")
@@ -292,7 +295,9 @@ enum PhotoLibrarySaver {
                 let rawOptions = PHAssetResourceCreationOptions()
                 rawOptions.shouldMoveFile = true
                 request.addResource(with: .alternatePhoto, fileURL: rawURL, options: rawOptions)
+                file([request], in: album)
             }
+            rememberAlbum(album)
             return .saved
         } catch {
             try? FileManager.default.removeItem(at: rawURL)
@@ -300,17 +305,88 @@ enum PhotoLibrarySaver {
             print("TrueShot: HEIC+DNG pair failed: \(reason) — \(error)")
             do {
                 try await PHPhotoLibrary.shared().performChanges {
-                    PHAssetCreationRequest.forAsset()
-                        .addResource(with: .photo, data: dng, options: options("com.adobe.raw-image", "TrueShot_\(stamp).DNG"))
-                    PHAssetCreationRequest.forAsset()
-                        .addResource(with: .photo, data: heic, options: options("public.heic", "TrueShot_\(stamp).HEIC"))
+                    let raw = PHAssetCreationRequest.forAsset()
+                    raw.addResource(with: .photo, data: dng, options: options("com.adobe.raw-image", "TrueShot_\(stamp).DNG"))
+                    let processed = PHAssetCreationRequest.forAsset()
+                    processed.addResource(with: .photo, data: heic, options: options("public.heic", "TrueShot_\(stamp).HEIC"))
+                    file([raw, processed], in: album)
                 }
+                rememberAlbum(album)
                 return .savedSeparately(reason)
             } catch {
                 print("TrueShot: separate save failed too: \(describe(error)) — \(error)")
                 return .failed(describe(error))
             }
         }
+    }
+
+    // MARK: Album
+
+    /// Where saved photos are filed. Photos only lets an app create or find albums with full
+    /// library access; with limited or add-only access, photos still save, just not into an album.
+    private enum Album: Sendable {
+        case unavailable, create, existing(String)
+    }
+
+    static let albumTitle = "Phim Thô"
+    private static let albumKey = "TrueShot.libraryAlbum.v1"
+
+    /// Asks for full access the first time (it's what the album needs). If that's declined or
+    /// limited, saving falls back to add-only access. Nil when the app can't add photos at all.
+    private static func authorize() async -> Album? {
+        var status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        if status == .notDetermined {
+            status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        }
+        switch status {
+        case .authorized:
+            return existingAlbumID().map(Album.existing) ?? .create
+        case .limited:
+            return .unavailable
+        default:
+            // Returns the current add-only status without prompting once the user has chosen.
+            let addOnly = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            return addOnly == .authorized || addOnly == .limited ? .unavailable : nil
+        }
+    }
+
+    /// The album found by the identifier remembered from the last save (so renaming it in Photos
+    /// keeps it), else by title. Nil when there's none to add to, e.g. the user deleted it.
+    private static func existingAlbumID() -> String? {
+        let defaults = UserDefaults.standard
+        if let id = defaults.string(forKey: albumKey),
+           let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject,
+           album.canPerform(.addContent) {
+            return id
+        }
+        let byTitle = PHFetchOptions()
+        byTitle.predicate = NSPredicate(format: "title = %@", albumTitle)
+        let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumRegular, options: byTitle)
+        let found = (0..<albums.count).lazy.map(albums.object(at:))
+            .first { $0.canPerform(.addContent) }?.localIdentifier
+        if let found { defaults.set(found, forKey: albumKey) }
+        return found
+    }
+
+    /// Inside a change block: adds the new assets to the album, creating it if needed. If the
+    /// album vanished since it was looked up, the photos are still saved, just not filed.
+    private static func file(_ requests: [PHAssetCreationRequest], in album: Album) {
+        let collection: PHAssetCollectionChangeRequest?
+        switch album {
+        case .unavailable:
+            return
+        case .create:
+            collection = .creationRequestForAssetCollection(withTitle: albumTitle)
+        case .existing(let id):
+            collection = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil)
+                .firstObject.flatMap { PHAssetCollectionChangeRequest(for: $0) }
+        }
+        collection?.addAssets(requests.compactMap(\.placeholderForCreatedAsset) as NSArray)
+    }
+
+    /// After a save that created the album, looks it up so the next save finds it by identifier.
+    private static func rememberAlbum(_ album: Album) {
+        if case .create = album { _ = existingAlbumID() }
     }
 
     private static func options(_ uti: String, _ filename: String) -> PHAssetResourceCreationOptions {

@@ -45,6 +45,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: "Phim Thô"
         INFOPLIST_KEY_NSCameraUsageDescription: "Phim Thô uses the camera to capture unprocessed RAW photos."
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "Phim Thô saves your RAW (DNG) photos to your library."
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Phim Thô saves your RAW (DNG) photos to your library and keeps them together in a Phim Thô album."
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UIStatusBarHidden: YES
@@ -98,6 +99,7 @@ targets:
           EXExtensionPointIdentifier: com.apple.securecapture
         NSCameraUsageDescription: "Phim Thô uses the camera to capture unprocessed RAW photos."
         NSPhotoLibraryAddUsageDescription: "Phim Thô saves your RAW (DNG) photos to your library."
+        NSPhotoLibraryUsageDescription: "Phim Thô saves your RAW (DNG) photos to your library and keeps them together in a Phim Thô album."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).TrueShot.Capture
