@@ -136,14 +136,7 @@ final class CameraModel {
         case .unauthorized:
             status = .unauthorized
         case .failed(let reason):
-            #if targetEnvironment(simulator)
-            // TEMPORARY (UI review): the simulator has no camera, so show the camera UI with
-            // stand-in lenses instead of "Camera Unavailable". Remove before merging.
-            _ = reason
-            showUIWithoutCamera()
-            #else
             status = .failed(reason)
-            #endif
         case .recommendedFraming(let landscape, let close):
             guard preferences.autoFraming, isFrontActive else { return }
             // Act on a recommendation only once it has held for a moment, so a face briefly
@@ -328,7 +321,8 @@ final class CameraModel {
         if #available(iOS 27.0, *) {
             angle = rotationCoordinator?.videoRotationAngleRelative(toDeviceOrientation: deviceOrientation) ?? 90
         } else {
-            angle = Self.captureAngle(for: deviceOrientation, front: isFrontActive)
+            angle = Self.captureAngle(for: deviceOrientation, front: isFrontActive,
+                                      portrait: rotationCoordinator?.videoRotationAngleForHorizonLevelPreview ?? 90)
         }
         #if DEBUG
         print("TrueShot: capture held \(deviceOrientation.rawValue) (1 portrait, 2 upside down, 3 port right, 4 port left) → angle \(Int(angle))")
@@ -337,50 +331,26 @@ final class CameraModel {
                                watermark: preferences.watermark))
     }
 
-    /// The capture angle before iOS 27's `videoRotationAngleRelative(toDeviceOrientation:)`:
-    /// the rear sensor's native orientation is landscape right, the front one's landscape left.
-    private static func captureAngle(for orientation: AVCaptureVideoOrientation, front: Bool) -> CGFloat {
-        switch orientation {
-        case .landscapeRight: front ? 180 : 0
-        case .landscapeLeft: front ? 0 : 180
-        case .portraitUpsideDown: 270
-        default: 90
+    /// The capture angle before iOS 27's `videoRotationAngleRelative(toDeviceOrientation:)`: this
+    /// camera's portrait angle (the preview's, as the UI is portrait-only) turned by how the phone is
+    /// held, the other way round on the mirrored front camera. Gives the tables verified on iOS 27 —
+    /// back [90, 0, 180, 270], front ultra wide [0, 90, 270, 180] for [portrait, port right, port left,
+    /// upside down].
+    private static func captureAngle(for orientation: AVCaptureVideoOrientation, front: Bool, portrait: CGFloat) -> CGFloat {
+        let turn: CGFloat = switch orientation {
+        case .landscapeRight: -90
+        case .landscapeLeft: 90
+        case .portraitUpsideDown: 180
+        default: 0
         }
+        let angle = (portrait + (front ? -turn : turn)).truncatingRemainder(dividingBy: 360)
+        return angle < 0 ? angle + 360 : angle
     }
 
     func setActive(_ active: Bool) {
         intents.yield(.setActive(active))
         if active { startOrientationUpdates() } else { motion.stopAccelerometerUpdates() }
     }
-
-    #if targetEnvironment(simulator)
-    /// TEMPORARY (UI review): stand-in lenses and capabilities, roughly an iPhone 15 Pro's.
-    private func showUIWithoutCamera() {
-        lenses = [
-            LensOption(id: "sim.uw", label: "0.5×", name: "Ultra Wide"),
-            LensOption(id: "sim.wide", label: "1×", name: "Wide"),
-            LensOption(id: "sim.tele", label: "3×", name: "Telephoto"),
-            LensOption(id: "sim.front", label: String(localized: "Front"), name: "Front", isFront: true),
-        ]
-        lensID = "sim.wide"
-        var caps = CameraCapabilities()
-        caps.lensID = lensID
-        caps.apertureStops = [1.78]
-        caps.apertureRange = 1.78...1.78
-        caps.shutterRange = (1.0 / 8000)...1
-        caps.isoRange = 50...6400
-        caps.manualFocus = true
-        caps.manualWhiteBalance = true
-        caps.rawAvailable = true
-        caps.hasFlash = true
-        caps.supportedCombos = [0, ManualAxes([.shutter, .iso]).rawValue]
-        capabilities = caps
-        readout.aperture = 1.78
-        readout.shutter = 1.0 / 120
-        readout.iso = 100
-        status = .running
-    }
-    #endif
 
     // MARK: Physical orientation
 
