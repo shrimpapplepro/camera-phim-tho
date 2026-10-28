@@ -30,9 +30,7 @@ struct CameraView: View {
         .onChange(of: scenePhase) { _, phase in
             model.setActive(phase == .active)
         }
-        .onCameraCaptureEvent(isEnabled: model.preferences.captureWithVolumeButtons) { event in
-            if event.phase == .ended { model.capture() }
-        }
+        .hardwareShutter(isEnabled: model.preferences.captureWithVolumeButtons) { model.capture() }
         .sheet(isPresented: $showSettings) {
             SettingsView(model: model)
         }
@@ -63,7 +61,7 @@ struct CameraView: View {
     // MARK: Top bar
 
     private var topBar: some View {
-        GlassEffectContainer(spacing: 12) {
+        LiquidGlassContainer(spacing: 12) {
             HStack(spacing: 12) {
                 Button {
                     if let openApp { openApp() } else { showSettings = true }
@@ -73,7 +71,7 @@ struct CameraView: View {
                         .frame(width: 30, height: 30)
                         .rotationEffect(.degrees(model.iconRotation))
                 }
-                .buttonStyle(.glass)
+                .glassButtonStyle()
                 .buttonBorderShape(.circle)
                 .accessibilityLabel(openApp == nil ? "Settings" : "Open Phim Thô")
 
@@ -89,7 +87,7 @@ struct CameraView: View {
                         .frame(width: 30, height: 30)
                         .rotationEffect(.degrees(model.iconRotation))
                 }
-                .buttonStyle(.glass)
+                .glassButtonStyle()
                 .buttonBorderShape(.circle)
                 .accessibilityLabel("Reset everything to Auto")
             }
@@ -128,7 +126,7 @@ struct CameraView: View {
                 .frame(width: 44, height: 44)
                 .rotationEffect(.degrees(model.iconRotation))
         }
-        .glassEffect(.regular.interactive(), in: .circle)
+        .liquidGlass(.regular.interactive(), in: .circle)
         .accessibilityLabel("Flash")
         .accessibilityValue(mode.label)
     }
@@ -160,7 +158,7 @@ struct CameraView: View {
             .fixedSize()
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .liquidGlass(.regular.interactive(), in: .capsule)
         .accessibilityLabel("Filters")
         .accessibilityValue(model.lookActive ? name : String(localized: "None"))
         .animation(.smooth(duration: 0.25), value: showName)
@@ -180,7 +178,7 @@ struct CameraView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .glassEffect(.regular, in: .capsule)
+        .liquidGlass(.regular, in: .capsule)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("RAW DNG, meter \(ExposureMath.biasText(model.readout.meterOffset)) EV")
     }
@@ -200,7 +198,7 @@ struct CameraView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
-                        .glassEffect(.regular, in: .capsule)
+                        .liquidGlass(.regular, in: .capsule)
                         .padding(12)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -246,7 +244,7 @@ struct CameraView: View {
                 if model.readout.isInterrupted {
                     Label("Camera Paused", systemImage: "pause.circle")
                         .padding()
-                        .glassEffect(.regular, in: .capsule)
+                        .liquidGlass(.regular, in: .capsule)
                         .rotationEffect(.degrees(model.iconRotation))
                 }
             }
@@ -282,7 +280,7 @@ struct CameraView: View {
                         .frame(width: 44, height: 44)
                         .rotationEffect(.degrees(model.iconRotation))
                 }
-                .buttonStyle(.glass)
+                .glassButtonStyle()
                 .buttonBorderShape(.circle)
                 .accessibilityLabel(model.isFrontActive ? "Switch to rear camera" : "Switch to front camera")
             } else {
@@ -299,7 +297,7 @@ struct ParameterStrip: View {
     let model: CameraModel
 
     var body: some View {
-        GlassEffectContainer(spacing: 6) {
+        LiquidGlassContainer(spacing: 6) {
             HStack(spacing: 6) {
                 ForEach(Parameter.allCases) { parameter in
                     chip(parameter)
@@ -335,7 +333,7 @@ struct ParameterStrip: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .glassEffect(selected ? .regular.tint(.yellow.opacity(0.35)).interactive() : .regular.interactive(),
+        .liquidGlass(selected ? .regular.tint(.yellow.opacity(0.35)).interactive() : .regular.interactive(),
                      in: .rect(cornerRadius: 14))
         .disabled(!model.isAvailable(parameter) && parameter != .aperture)
         .opacity(model.isAvailable(parameter) || parameter == .aperture ? 1 : 0.4)
@@ -361,7 +359,7 @@ struct LensPicker: View {
     let model: CameraModel
 
     var body: some View {
-        GlassEffectContainer(spacing: 4) {
+        LiquidGlassContainer(spacing: 4) {
             HStack(spacing: 4) {
                 ForEach(model.isFrontActive ? [] : model.rearLenses) { lens in
                     let active = lens.id == model.lensID
@@ -375,7 +373,7 @@ struct LensPicker: View {
                             .rotationEffect(.degrees(model.iconRotation))
                     }
                     .buttonStyle(.plain)
-                    .glassEffect(active ? .regular.interactive() : .clear.interactive(), in: .circle)
+                    .liquidGlass(active ? .regular.interactive() : .clear.interactive(), in: .circle)
                     .accessibilityLabel(lens.name)
                     .accessibilityAddTraits(active ? .isSelected : [])
                 }
@@ -391,7 +389,7 @@ struct LensPicker: View {
                             .rotationEffect(.degrees(model.iconRotation))
                     }
                     .buttonStyle(.plain)
-                    .glassEffect(auto ? .regular.interactive() : .clear.interactive(), in: .circle)
+                    .liquidGlass(auto ? .regular.interactive() : .clear.interactive(), in: .circle)
                     .accessibilityLabel("Auto framing")
                     .accessibilityValue(auto ? "On" : "Off")
                     .accessibilityHint("Lets the camera choose the crop and zoom for the people in frame.")
@@ -407,7 +405,7 @@ struct LensPicker: View {
                             .rotationEffect(.degrees(model.iconRotation))
                     }
                     .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .circle)
+                    .liquidGlass(.regular.interactive(), in: .circle)
                     .animation(.smooth, value: model.framingZoomLabel)
                     .accessibilityLabel(model.capabilities.isCloseFraming ? "Close framing" : "Wide framing")
                     .accessibilityHint("Switches between the close selfie framing and the whole sensor.")
@@ -423,7 +421,7 @@ struct LensPicker: View {
                             .rotationEffect(.degrees(model.iconRotation))
                     }
                     .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: .circle)
+                    .liquidGlass(.regular.interactive(), in: .circle)
                     .accessibilityLabel(model.isLandscapeFraming ? "Landscape framing" : "Portrait framing")
                     .accessibilityHint("Swaps portrait and landscape without rotating the phone.")
                 }
@@ -562,7 +560,21 @@ struct PermissionView: View {
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
             }
-            .buttonStyle(.glassProminent)
+            .glassButtonStyle(prominent: true)
+        }
+    }
+}
+
+extension View {
+    /// Volume buttons and Camera Control as the shutter (iOS 18 and later).
+    @ViewBuilder
+    func hardwareShutter(isEnabled: Bool, action: @escaping () -> Void) -> some View {
+        if #available(iOS 18.0, *) {
+            onCameraCaptureEvent(isEnabled: isEnabled) { event in
+                if event.phase == .ended { action() }
+            }
+        } else {
+            self
         }
     }
 }

@@ -67,7 +67,7 @@ struct PhotoLibraryView: View {
                 .tint(.red)
                 .disabled(selection.isEmpty || saveProgress != nil)
             }
-            ToolbarSpacer(.flexible, placement: .bottomBar)
+            FlexibleBottomBarSpacer()
             ToolbarItem(placement: .bottomBar) {
                 if let saveProgress {
                     HStack(spacing: 8) {
@@ -82,7 +82,7 @@ struct PhotoLibraryView: View {
                         Label("Save to Photos", systemImage: "square.and.arrow.down")
                             .labelStyle(.titleAndIcon)
                     }
-                    .buttonStyle(.glassProminent)
+                    .glassButtonStyle(prominent: true)
                     .disabled(unsavedSelection.isEmpty)
                 }
             }
@@ -281,7 +281,7 @@ struct PhotoPager: View {
                     }
                     .tint(.red)
                 }
-                ToolbarSpacer(.flexible, placement: .bottomBar)
+                FlexibleBottomBarSpacer()
                 ToolbarItem(placement: .bottomBar) {
                     saveButton(photo)
                 }
@@ -320,7 +320,7 @@ struct PhotoPager: View {
                 Label("Save to Photos", systemImage: "square.and.arrow.down")
                     .labelStyle(.titleAndIcon)
             }
-            .buttonStyle(.glassProminent)
+            .glassButtonStyle(prominent: true)
         }
     }
 

@@ -50,6 +50,8 @@ struct CameraCapabilities: Equatable, Sendable {
     var isCloseFraming = false
     var canZoomFraming: Bool { closeZoom > wideZoom }
     var hasFlash = false
+    /// The Camera Control button is there and usable (iPhone 16 and later, iOS 18 and later).
+    var hasCameraControl = false
     /// Manual-axis combinations the format accepts (`supportsExposureModeCustom`).
     var supportedCombos: Set<UInt8> = [0]
     var supportedExposureSignals: [String] = []

@@ -1,7 +1,7 @@
 name: TrueShot
 options:
   deploymentTarget:
-    iOS: "27.0"
+    iOS: "17.0"
   createIntermediateGroups: true
   # LastUpgradeCheck: Xcode stops offering "Update to recommended settings" once these are in.
   xcodeVersion: "27.2"
@@ -61,6 +61,8 @@ targets:
   TrueShotControls:
     type: app-extension
     platform: iOS
+    # Controls (ControlWidget) need iOS 18; on iOS 17 the app runs without them.
+    deploymentTarget: "18.0"
     sources:
       - Controls
       - Shared
@@ -84,6 +86,8 @@ targets:
   TrueShotCapture:
     type: extensionkit-extension
     platform: iOS
+    # LockedCameraCapture needs iOS 18; on iOS 17 there is no Lock Screen camera.
+    deploymentTarget: "18.0"
     sources:
       - path: TrueShot
         excludes: ["App/**", "Resources/**", "AppIcon.icon"]

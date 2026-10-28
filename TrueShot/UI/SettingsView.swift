@@ -11,11 +11,11 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                filterSection
                 meteringSection
                 adjustmentSection
                 viewfinderSection
                 captureSection
-                filterSection
                 autoExposureSection
                 cameraControlSection
                 lensSection
@@ -95,11 +95,17 @@ struct SettingsView: View {
             LabeledContent("Processing", value: String(localized: "None"))
             Toggle("Embed Preview in DNG", isOn: $model.preferences.embedDNGPreview)
             Toggle("Volume Buttons & Camera Control Capture", isOn: $model.preferences.captureWithVolumeButtons)
+                .disabled(!Self.isIOS18)
             Toggle("Remember Manual Settings", isOn: $model.preferences.rememberControls)
         } header: {
             Text("Capture")
         } footer: {
-            Text("Photos are saved as unprocessed Bayer RAW: no Deep Fusion, Smart HDR, Night mode, noise reduction, sharpening or tone mapping, and no digital zoom. Color and tone are set when the DNG is developed. The embedded preview is only a thumbnail for viewers; it doesn't change the RAW data.")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Photos are saved as unprocessed Bayer RAW: no Deep Fusion, Smart HDR, Night mode, noise reduction, sharpening or tone mapping, and no digital zoom. Color and tone are set when the DNG is developed. The embedded preview is only a thumbnail for viewers; it doesn't change the RAW data.")
+                if !Self.isIOS18 {
+                    Text("Capturing with the volume buttons needs iOS 18 or later.")
+                }
+            }
         }
     }
 
@@ -130,6 +136,9 @@ struct SettingsView: View {
                         Toggle(ExposureSignalInfo.name(raw), isOn: signalBinding(raw))
                     }
                 }
+            } else if !Self.isIOS27 {
+                Toggle("Automatic Scene Signals", isOn: $model.preferences.automaticExposureSignals)
+                    .disabled(true)
             }
             if caps.hasVariableAperture {
                 Picker("Auto Aperture Speed", selection: $model.preferences.apertureSpeed) {
@@ -139,7 +148,12 @@ struct SettingsView: View {
         } header: {
             Text("Auto Exposure")
         } footer: {
-            Text("Scene signals let auto exposure close or open the aperture for motion, groups, documents, point lights and flicker. Turn off Automatic to choose them yourself. These only apply to parameters left on Auto.")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Scene signals let auto exposure close or open the aperture for motion, groups, documents, point lights and flicker. Turn off Automatic to choose them yourself. These only apply to parameters left on Auto.")
+                if !Self.isIOS27 {
+                    Text("Scene signals need iOS 27 or later.")
+                }
+            }
         }
     }
 
@@ -147,12 +161,17 @@ struct SettingsView: View {
         Section {
             ForEach(Preferences.CameraControlItem.allCases) { item in
                 Toggle(item.label, isOn: cameraControlBinding(item))
-                    .disabled(!isCameraControlItemAvailable(item))
+                    .disabled(!caps.hasCameraControl || !isCameraControlItemAvailable(item))
             }
         } header: {
             Text("Camera Control")
         } footer: {
-            Text("Controls available from the Camera Control button. A light double-press opens the list. Aperture appears only on a lens with a variable aperture.")
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Controls available from the Camera Control button. A light double-press opens the list. Aperture appears only on a lens with a variable aperture.")
+                if !caps.hasCameraControl {
+                    Text("This iPhone has no Camera Control button. It's on iPhone 16 and later, with iOS 18 or later.")
+                }
+            }
         }
     }
 
@@ -192,6 +211,14 @@ struct SettingsView: View {
     }
 
     // MARK: Helpers
+
+    private static var isIOS18: Bool {
+        if #available(iOS 18.0, *) { true } else { false }
+    }
+
+    private static var isIOS27: Bool {
+        if #available(iOS 27.0, *) { true } else { false }
+    }
 
     private var apertureDescription: String {
         if caps.hasVariableAperture {
@@ -273,7 +300,8 @@ struct ExposureModesView: View {
 
 enum ExposureSignalInfo {
     static func name(_ raw: String) -> String {
-        switch raw {
+        guard #available(iOS 27.0, *) else { return raw }   // no signals before iOS 27
+        return switch raw {
         case AVCaptureDeviceExposureSignal.subjectMotion.rawValue: String(localized: "Subject Motion")
         case AVCaptureDeviceExposureSignal.groupPhoto.rawValue: String(localized: "Group Photo")
         case AVCaptureDeviceExposureSignal.document.rawValue: String(localized: "Document")

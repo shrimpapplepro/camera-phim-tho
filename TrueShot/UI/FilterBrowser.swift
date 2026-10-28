@@ -32,7 +32,7 @@ struct FilterBrowser: View {
                         .font(.body.weight(.semibold))
                         .frame(width: 32, height: 32)
                 }
-                .buttonStyle(.glass)
+                .glassButtonStyle()
                 .buttonBorderShape(.circle)
                 .accessibilityLabel("Close filters")
             }
@@ -54,7 +54,7 @@ struct FilterBrowser: View {
             }
         }
         .padding(12)
-        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        .liquidGlass(.regular, in: .rect(cornerRadius: 26))
         .sensoryFeedback(.success, trigger: model.preferences.favoriteLooks) { _, _ in model.preferences.haptics }
         .onAppear {
             if brand.isEmpty {

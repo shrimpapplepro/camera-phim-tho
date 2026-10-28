@@ -47,11 +47,12 @@ actor CaptureService {
     private var wantAtLastStep: Float?        // error when the last step was taken
     private var stalledSteps = 0              // consecutive steps that didn't reduce the error
 
-    // Camera Control (the side button on iPhone 16 and later).
-    private var apertureSlider: AVCaptureSlider?
-    private var shutterPicker: AVCaptureIndexPicker?
-    private var isoPicker: AVCaptureIndexPicker?
-    private var focusSlider: AVCaptureSlider?
+    // Camera Control (the side button on iPhone 16 and later). AVCaptureSlider / AVCaptureIndexPicker
+    // need iOS 18, and stored properties can't be availability-gated, so they're kept as NSObject.
+    private var apertureSlider: NSObject?
+    private var shutterPicker: NSObject?
+    private var isoPicker: NSObject?
+    private var focusSlider: NSObject?
     private var shutterStops: [Double] = []
     private var isoStops: [Float] = []
 
@@ -169,7 +170,7 @@ actor CaptureService {
             videoOutput.connection(with: .video)?.isEnabled = false
         }
 
-        if session.supportsControls {
+        if #available(iOS 18.0, *), session.supportsControls {
             session.setControlsDelegate(controlsDelegate, queue: sessionQueue)
         }
         isConfigured = true
@@ -214,7 +215,13 @@ actor CaptureService {
         // when present, otherwise the regular front camera.
         let fronts = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInUltraWideCamera, .builtInWideAngleCamera],
                                                       mediaType: .video, position: .front).devices
-        if let front = fronts.first(where: { $0.formats.contains { !$0.supportedDynamicAspectRatios.isEmpty } }) ?? fronts.first {
+        // (The dynamic-aspect APIs are iOS 26 at the Objective-C category level, which Swift doesn't
+        // enforce: every use in this file is gated by hand.)
+        var openGate: AVCaptureDevice?
+        if #available(iOS 26.0, *) {
+            openGate = fronts.first { $0.formats.contains { !$0.supportedDynamicAspectRatios.isEmpty } }
+        }
+        if let front = openGate ?? fronts.first {
             lenses.append(LensOption(id: front.uniqueID, label: String(localized: "Front"), name: front.localizedName, isFront: true))
             devicesByID[front.uniqueID] = front
         }
@@ -253,7 +260,7 @@ actor CaptureService {
     ///   layer and, for the filtered viewfinder, by the renderer after rotation.
     private func configureForPosition(_ camera: AVCaptureDevice) {
         let front = camera.position == .front
-        if front {
+        if front, #available(iOS 26.0, *) {
             let open = camera.formats.filter { !$0.supportedDynamicAspectRatios.isEmpty }
             let best = open.first { $0.isSmartFramingSupported && $0.supportedMaxPhotoDimensions.contains { $0.width >= 4032 } }
                 ?? open.first { $0.supportedMaxPhotoDimensions.contains { $0.width >= 4032 } }
@@ -301,7 +308,7 @@ actor CaptureService {
     /// (verified: ProRAW 3024×4032 vs 4032×3024). The zoom jumps with the crop: the viewfinder
     /// is held over the change (CameraModel.framingHold).
     private func setFraming(landscape: Bool, close: Bool) {
-        guard let device else { return }
+        guard #available(iOS 26.0, *), let device else { return }
         let ratio: AVCaptureDevice.AspectRatio = landscape ? .ratio3x4 : .ratio4x3
         guard device.activeFormat.supportedDynamicAspectRatios.contains(ratio),
               (try? device.lockForConfiguration()) != nil else { return }
@@ -322,6 +329,7 @@ actor CaptureService {
     /// Runs only on the active open-gate lens while the preference is on.
     private func updateSmartFraming() {
         framingObservation = nil
+        guard #available(iOS 26.0, *) else { return }
         for camera in devicesByID.values where camera !== device || !prefs.autoFraming {
             if camera.smartFramingMonitor?.isMonitoring == true { camera.smartFramingMonitor?.stopMonitoring() }
         }
@@ -350,7 +358,7 @@ actor CaptureService {
 
     /// Close ⇄ wide on the open-gate sensor, ramped like a zoom.
     private func setFramingZoom(close: Bool) {
-        guard let device, (try? device.lockForConfiguration()) != nil else { return }
+        guard #available(iOS 26.0, *), let device, (try? device.lockForConfiguration()) != nil else { return }
         let zooms = Self.framingZooms(device)
         device.ramp(toVideoZoomFactor: close ? zooms.close : zooms.wide, withRate: 4)
         device.unlockForConfiguration()
@@ -358,6 +366,7 @@ actor CaptureService {
     }
 
     /// The smart-framing monitor's zoom factors (any aspect ratio), clamped to the device.
+    @available(iOS 26.0, *)
     private static func framingZooms(_ device: AVCaptureDevice) -> (wide: CGFloat, close: CGFloat) {
         let factors = device.smartFramingMonitor?.supportedFramings.map(\.zoomFactor) ?? []
         let lo = device.minAvailableVideoZoomFactor, hi = device.maxAvailableVideoZoomFactor
@@ -395,16 +404,22 @@ actor CaptureService {
         var c = CameraCapabilities()
         c.lensID = device.uniqueID
 
-        let minA = format.minLensAperture, maxA = format.maxLensAperture
-        let stops = format.recommendedLensApertureStops.sorted()
-        if minA > 0, maxA >= minA {
-            c.apertureRange = minA...maxA
+        if #available(iOS 27.0, *) {
+            let minA = format.minLensAperture, maxA = format.maxLensAperture
+            let stops = format.recommendedLensApertureStops.sorted()
+            if minA > 0, maxA >= minA {
+                c.apertureRange = minA...maxA
+            } else {
+                c.apertureRange = device.lensAperture...device.lensAperture
+            }
+            c.apertureStops = stops.isEmpty ? [device.lensAperture] : stops
+            // Per the SDK: a single recommended stop means the aperture is fixed.
+            c.hasVariableAperture = stops.count > 1 && maxA > minA
         } else {
+            // No aperture control before iOS 27.
             c.apertureRange = device.lensAperture...device.lensAperture
+            c.apertureStops = [device.lensAperture]
         }
-        c.apertureStops = stops.isEmpty ? [device.lensAperture] : stops
-        // Per the SDK: a single recommended stop means the aperture is fixed.
-        c.hasVariableAperture = stops.count > 1 && maxA > minA
 
         c.shutterRange = format.minExposureDuration.seconds...format.maxExposureDuration.seconds
         c.isoRange = format.minISO...format.maxISO
@@ -418,24 +433,36 @@ actor CaptureService {
         c.rawAvailable = bayer || proRAW
         c.rawLabel = bayer ? "RAW" : "ProRAW"
         c.isFront = device.position == .front
-        let ratios = device.activeFormat.supportedDynamicAspectRatios
-        c.canSwapFraming = ratios.contains(.ratio4x3) && ratios.contains(.ratio3x4)
-        c.hasDynamicAspect = !ratios.isEmpty
-        if c.hasDynamicAspect {
-            (c.wideZoom, c.closeZoom) = Self.framingZooms(device)
-            c.isCloseFraming = c.canZoomFraming && device.videoZoomFactor > (c.wideZoom + c.closeZoom) / 2
+        if #available(iOS 26.0, *) {
+            let ratios = device.activeFormat.supportedDynamicAspectRatios
+            c.canSwapFraming = ratios.contains(.ratio4x3) && ratios.contains(.ratio3x4)
+            c.hasDynamicAspect = !ratios.isEmpty
+            if c.hasDynamicAspect {
+                (c.wideZoom, c.closeZoom) = Self.framingZooms(device)
+                c.isCloseFraming = c.canZoomFraming && device.videoZoomFactor > (c.wideZoom + c.closeZoom) / 2
+            }
+            let dims = device.dynamicDimensions
+            // Sensor-oriented dimensions are shown rotated a quarter turn in the portrait UI.
+            c.frameAspect = dims.width > 0 && dims.height > 0 ? CGFloat(dims.height) / CGFloat(dims.width) : 3.0 / 4.0
+        } else {
+            c.frameAspect = 3.0 / 4.0
         }
-        let dims = device.dynamicDimensions
-        // Sensor-oriented dimensions are shown rotated a quarter turn in the portrait UI.
-        c.frameAspect = dims.width > 0 && dims.height > 0 ? CGFloat(dims.height) / CGFloat(dims.width) : 3.0 / 4.0
         c.hasFlash = device.hasTorch   // the LED is driven as a torch burst (see fireLED)
-        c.supportedExposureSignals = device.supportedExposureSignals.map(\.rawValue).sorted()
+        if #available(iOS 18.0, *) { c.hasCameraControl = session.supportsControls }
+        if #available(iOS 27.0, *) {
+            c.supportedExposureSignals = device.supportedExposureSignals.map(\.rawValue).sorted()
+        }
 
         // Which priority modes does this format accept? "Current" stands for "locked".
         var combos: Set<UInt8> = [0]
         for mask in UInt8(1)..<8 {
             let axes = ManualAxes(rawValue: mask)
             if axes.contains(.aperture) && !c.hasVariableAperture { continue }
+            guard #available(iOS 27.0, *) else {
+                // Before iOS 27, custom exposure takes shutter and ISO together: full manual only.
+                if axes.isSuperset(of: [.shutter, .iso]) { combos.insert(mask) }
+                continue
+            }
             let a: Float = c.hasVariableAperture
                 ? (axes.contains(.aperture) ? AVCaptureDevice.currentLensAperture : AVCaptureDevice.autoLensAperture)
                 : AVCaptureDevice.currentLensAperture
@@ -523,6 +550,14 @@ actor CaptureService {
         }
         guard device.isExposureModeSupported(.custom) else { return }
 
+        guard #available(iOS 27.0, *) else {
+            // sanitized() made both axes manual (the only mode before iOS 27).
+            let duration = CMTime(seconds: controls.shutter ?? device.exposureDuration.seconds, preferredTimescale: 1_000_000_000)
+                .clamped(to: format.minExposureDuration...format.maxExposureDuration)
+            let iso = (controls.iso ?? device.iso).clamped(to: format.minISO...format.maxISO)
+            device.setExposureModeCustom(duration: duration, iso: iso, completionHandler: nil)
+            return
+        }
         let aperture: Float
         if caps.hasVariableAperture {
             aperture = controls.aperture.map { $0.clamped(to: format.minLensAperture...format.maxLensAperture) }
@@ -563,6 +598,7 @@ actor CaptureService {
             }
         }
 
+        guard #available(iOS 27.0, *) else { return }
         device.automaticallyEnablesExposureSignals = prefs.automaticExposureSignals
         if !prefs.automaticExposureSignals {
             let wanted = Set(prefs.enabledExposureSignals)
@@ -674,10 +710,16 @@ actor CaptureService {
         iso = iso.clamped(to: format.minISO...format.maxISO)
 
         if device.isExposureModeSupported(.custom), (try? device.lockForConfiguration()) != nil {
-            let aperture = AVCaptureDevice.currentLensAperture
-            if format.supportsExposureModeCustom(lensAperture: aperture, duration: duration, iso: iso) {
+            if #available(iOS 27.0, *) {
+                let aperture = AVCaptureDevice.currentLensAperture
+                if format.supportsExposureModeCustom(lensAperture: aperture, duration: duration, iso: iso) {
+                    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                        device.setExposureModeCustom(lensAperture: aperture, duration: duration, iso: iso) { _ in continuation.resume() }
+                    }
+                }
+            } else {
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    device.setExposureModeCustom(lensAperture: aperture, duration: duration, iso: iso) { _ in continuation.resume() }
+                    device.setExposureModeCustom(duration: duration, iso: iso) { _ in continuation.resume() }
                 }
             }
             device.unlockForConfiguration()
@@ -769,7 +811,7 @@ actor CaptureService {
     // MARK: - Camera Control
 
     private func rebuildSystemControls() {
-        guard session.supportsControls, let device else { return }
+        guard #available(iOS 18.0, *), session.supportsControls, let device else { return }
         for control in session.controls { session.removeControl(control) }
         apertureSlider = nil
         shutterPicker = nil
@@ -838,18 +880,18 @@ actor CaptureService {
     /// Push current values into the Camera Control widgets. Runs on sessionQueue,
     /// which is their action queue, as the SDK requires.
     private func syncSystemControls() {
-        guard let device else { return }
-        if let slider = apertureSlider, !caps.apertureStops.isEmpty {
+        guard #available(iOS 18.0, *), let device else { return }
+        if let slider = apertureSlider as? AVCaptureSlider, !caps.apertureStops.isEmpty {
             let current = controls.aperture ?? device.lensAperture
             slider.value = caps.apertureStops[ExposureMath.nearestIndex(of: current, in: caps.apertureStops)]
         }
-        if let picker = shutterPicker, !shutterStops.isEmpty {
+        if let picker = shutterPicker as? AVCaptureIndexPicker, !shutterStops.isEmpty {
             picker.selectedIndex = ExposureMath.nearestIndex(of: controls.shutter ?? device.exposureDuration.seconds, in: shutterStops)
         }
-        if let picker = isoPicker, !isoStops.isEmpty {
+        if let picker = isoPicker as? AVCaptureIndexPicker, !isoStops.isEmpty {
             picker.selectedIndex = ExposureMath.nearestIndex(of: controls.iso ?? device.iso, in: isoStops)
         }
-        if let slider = focusSlider {
+        if let slider = focusSlider as? AVCaptureSlider {
             slider.value = ((controls.focus ?? device.lensPosition) * 100).rounded() / 100
         }
     }
@@ -1117,13 +1159,16 @@ enum CameraError: LocalizedError, Sendable {
 }
 
 /// Receives Camera Control lifecycle callbacks on sessionQueue.
-final class SessionControlsDelegate: NSObject, AVCaptureSessionControlsDelegate, Sendable {
+final class SessionControlsDelegate: NSObject, Sendable {
     private let onFullscreen: @Sendable (Bool) -> Void
 
     init(onFullscreen: @escaping @Sendable (Bool) -> Void) {
         self.onFullscreen = onFullscreen
     }
+}
 
+@available(iOS 18.0, *)
+extension SessionControlsDelegate: AVCaptureSessionControlsDelegate {
     func sessionControlsDidBecomeActive(_ session: AVCaptureSession) {}
     func sessionControlsWillEnterFullscreenAppearance(_ session: AVCaptureSession) { onFullscreen(true) }
     func sessionControlsWillExitFullscreenAppearance(_ session: AVCaptureSession) { onFullscreen(false) }

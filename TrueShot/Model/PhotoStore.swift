@@ -199,7 +199,7 @@ final class PhotoStore {
     /// Moves photos taken on the Lock Screen (the extension's session content) into the app.
     /// Runs for the app's lifetime; a session's content is released once all of it is copied.
     func importLockedCameraContent() async {
-        guard !AppRuntime.isExtension, !importing else { return }
+        guard #available(iOS 18.0, *), !AppRuntime.isExtension, !importing else { return }
         importing = true
         for await update in LockedCameraCaptureManager.shared.sessionContentUpdates {
             switch update {
@@ -224,7 +224,7 @@ final class PhotoStore {
             found.filter { (try? target.copy($0.id, from: source)) != nil }
         }.value
         copied.forEach(insert)
-        if copied.count == found.count {
+        if #available(iOS 18.0, *), copied.count == found.count {
             try? await LockedCameraCaptureManager.shared.invalidateSessionContent(at: url)
         }
     }

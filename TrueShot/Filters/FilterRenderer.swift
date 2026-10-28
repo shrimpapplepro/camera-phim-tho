@@ -2,7 +2,6 @@
 import CoreImage
 import Metal
 import QuartzCore
-import Synchronization
 
 /// Renders the filtered viewfinder. Frames arrive from an AVCaptureVideoDataOutput on
 /// `videoQueue`, get the LUT applied with Core Image, and are drawn into a CAMetalLayer.
@@ -28,7 +27,7 @@ final class FilterRenderer: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         var onMeter: (@Sendable (MeterStats) -> Void)?
     }
 
-    private let state = Mutex(State())
+    private let state = Locked(State())
     private let device: MTLDevice?
     private let commandQueue: MTLCommandQueue?
     private let context: CIContext

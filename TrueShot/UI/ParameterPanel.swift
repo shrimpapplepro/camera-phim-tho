@@ -43,7 +43,7 @@ struct ParameterPanel: View {
             }
         }
         .padding(14)
-        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        .liquidGlass(.regular, in: .rect(cornerRadius: 26))
     }
 
     private var header: some View {
@@ -60,7 +60,7 @@ struct ParameterPanel: View {
                 autoButton
             } else if parameter == .bias, model.controls.bias != 0 {
                 Button("Reset") { model.setAuto(.bias, true) }
-                    .buttonStyle(.glass)
+                    .glassButtonStyle()
                     .controlSize(.small)
             }
         }
@@ -71,13 +71,13 @@ struct ParameterPanel: View {
         let auto = model.isAuto(parameter)
         if auto {
             Button("Auto") { model.setAuto(parameter, false) }
-                .buttonStyle(.glassProminent)
+                .glassButtonStyle(prominent: true)
                 .tint(.yellow)
                 .controlSize(.small)
                 .accessibilityHint("Switches \(parameter.title) to manual.")
         } else {
             Button("Auto") { model.setAuto(parameter, true) }
-                .buttonStyle(.glass)
+                .glassButtonStyle()
                 .controlSize(.small)
                 .accessibilityHint("Returns \(parameter.title) to automatic.")
         }
@@ -92,7 +92,7 @@ struct ParameterPanel: View {
                 Image(systemName: "minus")
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(.glass)
+            .glassButtonStyle()
             .buttonBorderShape(.circle)
             .buttonRepeatBehavior(.enabled)
             .accessibilityLabel("Decrease \(config.title)")
@@ -110,7 +110,7 @@ struct ParameterPanel: View {
                 Image(systemName: "plus")
                     .frame(width: 28, height: 28)
             }
-            .buttonStyle(.glass)
+            .glassButtonStyle()
             .buttonBorderShape(.circle)
             .buttonRepeatBehavior(.enabled)
             .accessibilityLabel("Increase \(config.title)")
